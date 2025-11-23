@@ -942,13 +942,14 @@ async def get_project_work_ticket(
     try:
         # Validate project exists and user has access
         project_response = supabase.table("projects").select(
-            "id, name, user_id"
+            "id, name, user_id, basket_id"
         ).eq("id", project_id).single().execute()
 
         if not project_response.data:
             raise HTTPException(status_code=404, detail="Project not found")
 
         project = project_response.data
+        basket_id = project["basket_id"]
 
         # Verify user owns project
         if project["user_id"] != user_id:
