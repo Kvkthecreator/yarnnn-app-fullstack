@@ -183,24 +183,23 @@ async def create_project_work_ticket(
         basket_id = project["basket_id"]
 
         # ================================================================
-        # Step 2: Validate Agent Belongs to Project
+        # Step 2: Get Agent Session (refactored from project_agents)
         # ================================================================
-        agent_response = supabase.table("project_agents").select(
-            "id, agent_type, display_name, is_active"
-        ).eq("id", request.agent_id).eq("project_id", project_id).single().execute()
+        # After Phase 2e refactor, agent_sessions are created during project scaffolding
+        # The agent_id from frontend is actually an agent_session_id
+        agent_session_response = supabase.table("agent_sessions").select(
+            "id, agent_type, basket_id, project_id"
+        ).eq("id", request.agent_id).eq("basket_id", basket_id).single().execute()
 
-        if not agent_response.data:
+        if not agent_session_response.data:
             raise HTTPException(
                 status_code=404,
-                detail="Agent not found or does not belong to this project"
+                detail="Agent session not found for this project"
             )
 
-        agent = agent_response.data
-
-        if not agent["is_active"]:
-            raise HTTPException(status_code=400, detail="Agent is not active")
-
-        agent_type = agent["agent_type"]
+        agent_session = agent_session_response.data
+        agent_type = agent_session["agent_type"]
+        agent_session_id = agent_session["id"]
 
         logger.debug(
             f"[PROJECT WORK SESSION] Validated project and agent: "
@@ -960,15 +959,19 @@ async def get_project_work_ticket(
 
         session = session_response.data
 
-        # Fetch agent details
-        agent_response = supabase.table("project_agents").select(
-            "id, agent_type, display_name"
+        # Fetch agent session (refactored from project_agents)
+        # The project_agent_id in work_tickets should now point to an agent_session
+        agent_session_response = supabase.table("agent_sessions").select(
+            "id, agent_type"
         ).eq("id", session["project_agent_id"]).single().execute()
 
-        if not agent_response.data:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        if not agent_session_response.data:
+            raise HTTPException(status_code=404, detail="Agent session not found")
 
-        agent = agent_response.data
+        agent_session = agent_session_response.data
+
+        # Generate display name from agent_type (no display_name field in agent_sessions)
+        agent_display_name = agent_session["agent_type"].replace("_", " ").title()
 
         # Count outputs for this session
         outputs_response = supabase.table("work_outputs").select(
@@ -992,9 +995,9 @@ async def get_project_work_ticket(
             ticket_id=session["id"],
             project_id=session["project_id"],
             project_name=project["name"],
-            agent_id=agent["id"],
-            agent_type=agent["agent_type"],
-            agent_display_name=agent["display_name"],
+            agent_id=agent_session["id"],
+            agent_type=agent_session["agent_type"],
+            agent_display_name=agent_display_name,
             task_description=session["task_intent"],  # Fixed: use task_intent
             status=session["status"],
             task_type=session["task_type"],
