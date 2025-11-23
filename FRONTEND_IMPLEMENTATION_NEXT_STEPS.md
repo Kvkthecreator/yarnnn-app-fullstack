@@ -1,7 +1,8 @@
-# Frontend Implementation: Next Steps
+# Frontend Implementation: Next Steps (REVISED - Agent-Type-Specific Routes)
 
-**Status**: Backend Complete ✅ | Frontend Ready to Start 📋
+**Status**: Backend Complete ✅ | Architecture Audit Complete ✅ | Frontend Ready to Start 📋
 **Date**: 2025-11-23
+**Architecture**: Agent-Type-Specific Routes (mirrors backend structure)
 
 ---
 
@@ -9,10 +10,13 @@
 
 The work recipes backend is fully implemented and tested. This document provides the exact steps to implement the frontend components for the recipes-only workflow.
 
-### Architecture Confirmed:
-- **Single Entry Point**: "+ New Work" button (top-right of dashboard)
+### Architecture Confirmed (REVISED):
+- **Entry Points**: Action buttons on agent cards in project overview
+- **Route Pattern**: `/projects/[id]/agents/[agentType]/recipes` (agent-specific)
 - **No Free-Form Path**: Users must select a recipe
-- **Flow**: Gallery → Configuration → Execution → Results
+- **Flow**: Agent Card → Recipe Gallery (filtered) → Configuration → Execution → Results
+
+**Key Change**: Routes are **agent-type-specific** (not generic `/work/new`), mirroring backend endpoint structure.
 
 ---
 
@@ -177,7 +181,7 @@ export function ParameterInput({ name, schema, value, onChange, error }: Paramet
 }
 ```
 
-### Phase 2: Recipe Gallery Page
+### Phase 2: Recipe Gallery Page (REVISED - Agent-Specific)
 
 #### 2.1 Create Recipe Card Component
 **File**: `work-platform/web/components/recipes/RecipeCard.tsx`
@@ -191,9 +195,11 @@ import type { Recipe } from '@/lib/types/recipes'
 
 interface RecipeCardProps {
   recipe: Recipe
+  projectId: string
+  agentType: string
 }
 
-export function RecipeCard({ recipe }: RecipeCardProps) {
+export function RecipeCard({ recipe, projectId, agentType }: RecipeCardProps) {
   const [minDuration, maxDuration] = recipe.estimated_duration_seconds
   const [minCost, maxCost] = recipe.estimated_cost_cents
 
@@ -208,7 +214,7 @@ export function RecipeCard({ recipe }: RecipeCardProps) {
 
   return (
     <Link
-      href={`/work/new/${recipe.slug}`}
+      href={`/projects/${projectId}/agents/${agentType}/recipes/${recipe.slug}`}
       className="block p-6 bg-white border border-gray-200 rounded-lg hover:shadow-lg transition-shadow"
     >
       <div className="flex items-start justify-between mb-3">
@@ -240,27 +246,29 @@ export function RecipeCard({ recipe }: RecipeCardProps) {
 }
 ```
 
-#### 2.2 Create Recipe Gallery Page
-**File**: `work-platform/web/app/work/new/page.tsx`
+#### 2.2 Create Agent-Specific Recipe Gallery Page
+**File**: `work-platform/web/app/projects/[id]/agents/[agentType]/recipes/page.tsx`
 
 ```typescript
 'use client'
 
-import { useState } from 'react'
+import { use } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { RecipeCard } from '@/components/recipes/RecipeCard'
 import type { Recipe } from '@/lib/types/recipes'
+import { Badge } from '@/components/ui/Badge'
 
-export default function RecipeGalleryPage() {
-  const [agentTypeFilter, setAgentTypeFilter] = useState<string | null>(null)
+interface PageProps {
+  params: Promise<{ id: string; agentType: string }>
+}
+
+export default function AgentRecipeGalleryPage({ params }: PageProps) {
+  const { id: projectId, agentType } = use(params)
 
   const { data: recipes, isLoading } = useQuery({
-    queryKey: ['recipes', { agent_type: agentTypeFilter }],
+    queryKey: ['recipes', agentType],
     queryFn: async () => {
-      const params = new URLSearchParams()
-      if (agentTypeFilter) params.append('agent_type', agentTypeFilter)
-
-      const response = await fetch(`/api/work/recipes?${params}`)
+      const response = await fetch(`/api/work/recipes?agent_type=${agentType}`)
       if (!response.ok) throw new Error('Failed to fetch recipes')
       return response.json() as Promise<Recipe[]>
     }
@@ -269,33 +277,33 @@ export default function RecipeGalleryPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Choose a Work Recipe</h1>
-        <p className="text-gray-600">Select a template to create structured work deliverables</p>
-      </div>
-
-      <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-2">Filter by Type</label>
-        <select
-          value={agentTypeFilter ?? ''}
-          onChange={(e) => setAgentTypeFilter(e.target.value || null)}
-          className="px-3 py-2 border border-gray-300 rounded-md"
-        >
-          <option value="">All Types</option>
-          <option value="research">Research</option>
-          <option value="content">Content</option>
-          <option value="reporting">Reporting</option>
-        </select>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-3xl font-bold text-gray-900 capitalize">{agentType} Recipes</h1>
+          <Badge variant="secondary">{recipes?.length || 0} available</Badge>
+        </div>
+        <p className="text-gray-600">
+          Select a recipe template for {agentType} work deliverables
+        </p>
       </div>
 
       {isLoading ? (
         <div className="text-center py-12">
           <p className="text-gray-500">Loading recipes...</p>
         </div>
-      ) : (
+      ) : recipes && recipes.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {recipes?.map((recipe) => (
-            <RecipeCard key={recipe.id} recipe={recipe} />
+          {recipes.map((recipe) => (
+            <RecipeCard
+              key={recipe.id}
+              recipe={recipe}
+              projectId={projectId}
+              agentType={agentType}
+            />
           ))}
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <p className="text-gray-500">No recipes available for {agentType}</p>
         </div>
       )}
     </div>
@@ -303,27 +311,42 @@ export default function RecipeGalleryPage() {
 }
 ```
 
-### Phase 3: Recipe Configuration Page
+### Phase 3: Recipe Configuration Page (REVISED - Agent-Specific)
 
-**File**: `work-platform/web/app/work/new/[slug]/page.tsx`
+**File**: `work-platform/web/app/projects/[id]/agents/[agentType]/recipes/[slug]/page.tsx`
 
 ```typescript
 'use client'
 
-import { useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { use, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ParameterInput } from '@/components/recipes/ParameterInput'
 import type { Recipe } from '@/lib/types/recipes'
+import { Button } from '@/components/ui/Button'
+import { Card } from '@/components/ui/Card'
 
-export default function RecipeConfigurationPage() {
-  const params = useParams()
+interface PageProps {
+  params: Promise<{ id: string; agentType: string; slug: string }>
+}
+
+export default function RecipeConfigurationPage({ params }: PageProps) {
+  const { id: projectId, agentType, slug } = use(params)
   const router = useRouter()
-  const slug = params?.slug as string
 
   const [parameters, setParameters] = useState<Record<string, any>>({})
   const [taskDescription, setTaskDescription] = useState('')
+
+  // Fetch project to get basket_id
+  const { data: project } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: async () => {
+      const response = await fetch(`/api/projects/${projectId}`)
+      if (!response.ok) throw new Error('Failed to fetch project')
+      return response.json()
+    }
+  })
 
   // Fetch recipe details
   const { data: recipe, isLoading } = useQuery({
@@ -335,17 +358,16 @@ export default function RecipeConfigurationPage() {
     }
   })
 
-  // Execute recipe mutation
+  // Execute recipe mutation (agent-specific endpoint)
   const executeMutation = useMutation({
     mutationFn: async () => {
-      // TODO: Get actual basket_id from context
-      const basketId = 'YOUR_BASKET_ID' // Replace with actual basket ID from context
+      if (!project?.basket_id) throw new Error('Project not loaded')
 
-      const response = await fetch('/api/work/reporting/execute', {
+      const response = await fetch(`/api/work/${agentType}/execute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          basket_id: basketId,
+          basket_id: project.basket_id,
           task_description: taskDescription || recipe?.name,
           recipe_id: slug,
           recipe_parameters: parameters,
@@ -362,20 +384,31 @@ export default function RecipeConfigurationPage() {
     },
     onSuccess: (data) => {
       toast.success('Recipe executed successfully!')
-      router.push(`/work/results/${data.work_request_id}`)
+      // Navigate to agent dashboard or work session
+      router.push(`/projects/${projectId}/agents/${agentType}`)
     },
     onError: (error: Error) => {
       toast.error(error.message)
     }
   })
 
-  if (isLoading) return <div className="p-8">Loading...</div>
+  if (isLoading) return <div className="p-8">Loading recipe...</div>
   if (!recipe) return <div className="p-8">Recipe not found</div>
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-2">{recipe.name}</h1>
-      <p className="text-gray-600 mb-8">{recipe.description}</p>
+      <Card className="p-6 mb-6">
+        <h1 className="text-3xl font-bold mb-2">{recipe.name}</h1>
+        <p className="text-gray-600 mb-4">{recipe.description}</p>
+        <div className="flex gap-2">
+          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded capitalize">
+            {agentType}
+          </span>
+          <span className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded">
+            {recipe.category}
+          </span>
+        </div>
+      </Card>
 
       <form onSubmit={(e) => { e.preventDefault(); executeMutation.mutate() }} className="space-y-6">
         {Object.entries(recipe.configurable_parameters).map(([name, schema]) => (
@@ -401,57 +434,116 @@ export default function RecipeConfigurationPage() {
           />
         </div>
 
-        <button
+        <Button
           type="submit"
           disabled={executeMutation.isPending}
-          className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+          className="w-full"
         >
           {executeMutation.isPending ? 'Executing...' : 'Execute Recipe'}
-        </button>
+        </Button>
       </form>
     </div>
   )
 }
 ```
 
-### Phase 4: Dashboard Integration
+### Phase 4: Project Overview Integration (REVISED)
 
-**File**: `work-platform/web/app/dashboard/page.tsx` (Update)
+**File**: `work-platform/web/app/projects/[id]/overview/ProjectOverviewClient.tsx` (Update)
 
-Add "+ New Work" button to the dashboard header:
+Add "Browse Recipes" button to each agent card:
 
 ```typescript
 // Add import at top
-import Link from 'next/link'
-import { Plus } from 'lucide-react'
+import { BookOpen } from 'lucide-react'
 
-// In the JSX, add this near the top of the page (before the main content):
-<div className="flex justify-between items-center mb-6">
-  <h1 className="text-2xl font-bold">Dashboard</h1>
-  <Link
-    href="/work/new"
-    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+// In the agent card rendering (around line 150), add action button:
+{agent.is_active && (
+  <Button
+    onClick={() => router.push(`/projects/${project.id}/agents/${agent.agent_type}/recipes`)}
+    variant="outline"
+    size="sm"
+    className="w-full"
   >
-    <Plus className="w-4 h-4 mr-2" />
-    New Work
-  </Link>
+    <BookOpen className="w-4 h-4 mr-2" />
+    Browse Recipes
+  </Button>
+)}
+```
+
+**Full Updated Agent Card Section** (lines 116-165):
+
+```typescript
+<div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+  {project.agents.map((agent) => {
+    const stats = agentSummaries[agent.id];
+    return (
+      <div
+        key={agent.id}
+        className={cn(
+          'rounded-xl border bg-card p-4 transition-all flex flex-col gap-3',
+          agent.is_active ? 'hover:border-ring hover:shadow-md' : 'opacity-70'
+        )}
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-surface-primary/70 p-2 text-primary">
+              <Zap className="h-5 w-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-foreground">{agent.display_name}</div>
+              <div className="text-xs text-muted-foreground capitalize">{agent.agent_type}</div>
+            </div>
+          </div>
+          <Badge variant="outline" className={cn('text-xs capitalize w-fit', getAgentStatusBadgeClass(stats, agent.is_active))}>
+            {getAgentStatusLabel(stats, agent.is_active)}
+          </Badge>
+        </div>
+
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>
+            {stats?.lastRun
+              ? `Last run ${formatDistanceToNow(new Date(stats.lastRun))} ago`
+              : 'Session ready • Never used'}
+          </p>
+          {stats?.lastTask && (
+            <p className="line-clamp-2 text-foreground/80">"{stats.lastTask}"</p>
+          )}
+        </div>
+
+        {/* NEW: Recipe action button */}
+        {agent.is_active && (
+          <Button
+            onClick={() => router.push(`/projects/${project.id}/agents/${agent.agent_type}/recipes`)}
+            variant="outline"
+            size="sm"
+            className="w-full mt-auto"
+          >
+            <BookOpen className="w-4 h-4 mr-2" />
+            Browse Recipes
+          </Button>
+        )}
+      </div>
+    );
+  })}
 </div>
 ```
 
 ---
 
-## Testing Checklist
+## Testing Checklist (REVISED)
 
-- [ ] Recipe gallery loads and displays recipes
-- [ ] Filter by agent_type works
-- [ ] Recipe cards navigate to configuration page
+- [ ] Agent cards display "Browse Recipes" button
+- [ ] Button navigates to agent-specific recipe gallery
+- [ ] Recipe gallery filters by agent_type automatically
+- [ ] Recipe cards navigate to configuration page with correct agent context
 - [ ] Configuration page loads recipe details
 - [ ] Parameter inputs render correctly (range, text, multi-select)
 - [ ] Form validation works
-- [ ] Recipe execution succeeds
-- [ ] Navigation to results page works
-- [ ] "+ New Work" button appears on dashboard
-- [ ] Button navigates to recipe gallery
+- [ ] Recipe execution posts to correct agent endpoint (`/work/{agentType}/execute`)
+- [ ] Execution succeeds and creates work outputs
+- [ ] Navigation back to agent dashboard works
+- [ ] Work session appears on agent dashboard
 
 ---
 
@@ -482,18 +574,24 @@ export async function GET(request: NextRequest) {
 
 ---
 
-## Next Actions
+## Next Actions (REVISED)
 
-1. **Create type definitions** (recipes.ts)
-2. **Implement ParameterInput** component
-3. **Create RecipeCard** component
-4. **Build Recipe Gallery** page
-5. **Build Recipe Configuration** page
-6. **Update Dashboard** with "+ New Work" button
-7. **Test end-to-end flow**
+1. **Create type definitions** ([lib/types/recipes.ts](work-platform/web/lib/types/recipes.ts))
+2. **Implement ParameterInput** component ([components/recipes/ParameterInput.tsx](work-platform/web/components/recipes/ParameterInput.tsx))
+3. **Create RecipeCard** component ([components/recipes/RecipeCard.tsx](work-platform/web/components/recipes/RecipeCard.tsx))
+4. **Build Agent-Specific Recipe Gallery** page ([app/projects/[id]/agents/[agentType]/recipes/page.tsx](work-platform/web/app/projects/[id]/agents/[agentType]/recipes/page.tsx))
+5. **Build Recipe Configuration** page ([app/projects/[id]/agents/[agentType]/recipes/[slug]/page.tsx](work-platform/web/app/projects/[id]/agents/[agentType]/recipes/[slug]/page.tsx))
+6. **Update Project Overview** with recipe buttons ([app/projects/[id]/overview/ProjectOverviewClient.tsx](work-platform/web/app/projects/[id]/overview/ProjectOverviewClient.tsx))
+7. **Test end-to-end flow** (all three agent types)
 8. **Deploy and validate**
 
 **Estimated Time**: 3-4 hours for complete frontend implementation
+
+**Route Structure Summary**:
+```
+/projects/[id]/agents/[agentType]/recipes         → Recipe gallery (filtered)
+/projects/[id]/agents/[agentType]/recipes/[slug]  → Recipe configuration + execution
+```
 
 ---
 
