@@ -28,7 +28,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import WorkSessionExecutor from './WorkSessionExecutor';
-import ArtifactList from './ArtifactList';  // TODO: Rename to WorkOutputList
+// TODO: Rename ArtifactList to WorkOutputList for Phase 2e terminology
+import ArtifactList from './ArtifactList';
 
 interface PageProps {
   params: Promise<{ id: string; sessionId: string }>;
@@ -60,10 +61,11 @@ export default async function WorkSessionDetailPage({ params }: PageProps) {
       session = await response.json();
 
       // Fetch work outputs if session is completed (Phase 2e terminology)
+      // TODO: Rename endpoint from /artifacts to /outputs for Phase 2e
       if (session.status === 'completed') {
         try {
           const outputsResponse = await fetch(
-            `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/projects/${projectId}/work-sessions/${sessionId}/artifacts`,  // TODO: Rename endpoint to /outputs
+            `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/api/projects/${projectId}/work-sessions/${sessionId}/artifacts`,
             {
               headers: {
                 Cookie: (await cookies()).toString(),
@@ -163,21 +165,23 @@ export default async function WorkSessionDetailPage({ params }: PageProps) {
       )}
 
       {/* Work Session Executor - Shows execute button and status cards */}
+      {/* Phase 2e: Using outputs_count instead of artifacts_count */}
       <WorkSessionExecutor
         projectId={projectId}
         sessionId={sessionId}
         initialStatus={session.status}
-        initialArtifactsCount={session.outputs_count || 0}  {/* Phase 2e: outputs_count */}
+        initialArtifactsCount={session.outputs_count || 0}
       />
 
       {/* Work Outputs Viewer (Phase 2e: work_outputs table) */}
+      {/* TODO: Rename ArtifactList component to WorkOutputList */}
       {session.status === 'completed' && (
         <div className="space-y-4">
           <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
             <FileText className="h-5 w-5" />
             Work Outputs & Results
           </h2>
-          <ArtifactList artifacts={workOutputs} />  {/* TODO: Rename component to WorkOutputList */}
+          <ArtifactList artifacts={workOutputs} />
         </div>
       )}
     </div>
