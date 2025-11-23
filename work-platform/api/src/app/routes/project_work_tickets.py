@@ -188,7 +188,7 @@ async def create_project_work_ticket(
         # After Phase 2e refactor, agent_sessions are created during project scaffolding
         # The agent_id from frontend is actually an agent_session_id
         agent_session_response = supabase.table("agent_sessions").select(
-            "id, agent_type, basket_id, project_id"
+            "id, agent_type, basket_id"
         ).eq("id", request.agent_id).eq("basket_id", basket_id).single().execute()
 
         if not agent_session_response.data:
