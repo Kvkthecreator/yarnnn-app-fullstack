@@ -75,6 +75,7 @@ from .work.routes import router as work_platform_router
 from .work.review_routes import router as work_review_router
 from .routes.thinking_partner import router as thinking_partner_router
 from .routes.workflow_research import router as workflow_research_router
+from .routes.workflow_reporting import router as workflow_reporting_router
 from .routes.test_workflows import router as test_workflows_router
 from .routes.work_recipes import router as work_recipes_router
 
@@ -161,6 +162,7 @@ routers = (
     work_review_router,
     thinking_partner_router,
     workflow_research_router,
+    workflow_reporting_router,
     test_workflows_router,
     work_recipes_router,
 )
