@@ -168,7 +168,9 @@ export default function CreateWorkRequestModal({
       setTimeout(() => {
         handleClose(false);
         resetState();
-        router.push(`/projects/${projectId}/work-sessions/${result.session_id}`);
+        // Backend returns ticket_id (Phase 2e work_tickets primary key)
+        const sessionId = result.ticket_id || result.session_id; // Backward compat
+        router.push(`/projects/${projectId}/work-sessions/${sessionId}`);
         router.refresh();
       }, 1500);
 
