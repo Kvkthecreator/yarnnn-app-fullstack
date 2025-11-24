@@ -1,13 +1,12 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
-import { Plus, Zap, CheckCircle2, BookOpen } from 'lucide-react';
+import { Plus, Zap, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import CreateWorkRequestModal from '@/components/CreateWorkRequestModal';
 import { formatDistanceToNow } from 'date-fns';
 
 interface ProjectAgent {
@@ -60,22 +59,8 @@ interface ProjectOverviewClientProps {
 
 export function ProjectOverviewClient({ project }: ProjectOverviewClientProps) {
   const router = useRouter();
-  const [workRequestModalOpen, setWorkRequestModalOpen] = useState(false);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
   const agentSummaries = useMemo(() => project.stats.agents || {}, [project.stats.agents]);
-
-  const handleAgentClick = (agentId: string) => {
-    setSelectedAgentId(agentId);
-    setWorkRequestModalOpen(true);
-  };
-
-  const handleModalClose = (open: boolean) => {
-    setWorkRequestModalOpen(open);
-    if (!open) {
-      setSelectedAgentId(null);
-    }
-  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 p-6">
@@ -154,41 +139,30 @@ export function ProjectOverviewClient({ project }: ProjectOverviewClientProps) {
                     ) : null}
                   </div>
                   <div className="flex flex-col gap-2">
-                    {/* Browse Recipes Button */}
+                    {/* Create Work Ticket Button */}
                     {agent.is_active && (
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="secondary"
                         className="w-full gap-2"
-                        onClick={() => router.push(`/projects/${project.id}/agents/${agent.agent_type}/recipes`)}
+                        onClick={() => router.push(`/projects/${project.id}/work-tickets/new`)}
                       >
-                        <BookOpen className="h-4 w-4" />
-                        Browse Recipes
+                        <Plus className="h-4 w-4" />
+                        Create Work Ticket
                       </Button>
                     )}
 
-                    {/* Legacy Actions */}
-                    <div className="flex gap-2 flex-wrap">
+                    {/* View Work Tickets Button */}
+                    {(stats?.pending || stats?.running || stats?.lastRun) && (
                       <Button
                         size="sm"
-                        variant="ghost"
-                        disabled={!agent.is_active}
-                        onClick={() => router.push(`/projects/${project.id}/agents/${agent.agent_type}`)}
-                        className="text-xs flex-1"
+                        variant="outline"
+                        className="w-full text-xs"
+                        onClick={() => router.push(`/projects/${project.id}/work-tickets?agent=${agent.id}`)}
                       >
-                        Manage
+                        View Work Tickets
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="gap-2 flex-1"
-                        disabled={!agent.is_active}
-                        onClick={() => handleAgentClick(agent.id)}
-                      >
-                        <Plus className="h-4 w-4" />
-                        {getAgentQuickActionLabel(agent.agent_type)}
-                      </Button>
-                    </div>
+                    )}
                   </div>
                 </div>
               );
@@ -232,72 +206,22 @@ export function ProjectOverviewClient({ project }: ProjectOverviewClientProps) {
         </div>
       </Card>
 
-      {/* Work Request Modal */}
-      <CreateWorkRequestModal
-        open={workRequestModalOpen}
-        onOpenChange={handleModalClose}
-        projectId={project.id}
-        agents={project.agents}
-        preSelectedAgentId={selectedAgentId}
-      />
     </div>
   );
 }
 
-function getAgentQuickActionLabel(agentType: string) {
-  switch (agentType) {
-    case 'research':
-      return 'Run Monitor';
-    case 'content':
-      return 'Create Content';
-    case 'reporting':
-      return 'Generate Report';
-    default:
-      return 'Start Work';
-  }
-}
-
-function getAgentQuickActionHint(agentType: string) {
-  switch (agentType) {
-    case 'research':
-      return 'Monitor markets or run a deep dive.';
-    case 'content':
-      return 'Draft posts, briefs, or copy.';
-    case 'reporting':
-      return 'Assemble summaries or decks.';
-    default:
-      return 'Kick off a new work session.';
-  }
-}
-
-function getAgentStatusLabel(
-  stats: { pending: number; running: number; lastStatus: string | null } | undefined,
-  isActive: boolean
-) {
+function getAgentStatusLabel(stats: any, isActive: boolean) {
   if (!isActive) return 'Inactive';
-  if (!stats) return 'Ready'; // Changed from 'Idle' to 'Ready' for pre-scaffolded sessions
+  if (!stats || !stats.lastRun) return 'Ready';
   if (stats.running > 0) return 'Running';
-  if (stats.pending > 0) return 'Queued';
-  if (stats.lastStatus) return stats.lastStatus.charAt(0).toUpperCase() + stats.lastStatus.slice(1);
-  return 'Ready';
+  if (stats.pending > 0) return 'Pending';
+  return stats.lastStatus === 'completed' ? 'Completed' : 'Ready';
 }
 
-function getAgentStatusBadgeClass(
-  stats: { pending: number; running: number; lastStatus: string | null } | undefined,
-  isActive: boolean
-) {
-  const label = getAgentStatusLabel(stats, isActive).toLowerCase();
-  if (label === 'running') {
-    return 'bg-surface-primary/60 text-primary';
-  }
-  if (label === 'queued' || label === 'pending') {
-    return 'bg-surface-warning/60 text-warning-foreground';
-  }
-  if (label === 'inactive') {
-    return 'bg-muted text-muted-foreground';
-  }
-  if (label === 'ready') {
-    return 'bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20';
-  }
-  return 'bg-surface-primary/20 text-primary';
+function getAgentStatusBadgeClass(stats: any, isActive: boolean) {
+  if (!isActive) return 'border-muted text-muted-foreground';
+  if (!stats || !stats.lastRun) return 'border-blue-500/30 text-blue-600 dark:text-blue-400';
+  if (stats.running > 0) return 'border-yellow-500/30 text-yellow-600 dark:text-yellow-400';
+  if (stats.pending > 0) return 'border-orange-500/30 text-orange-600 dark:text-orange-400';
+  return stats.lastStatus === 'completed' ? 'border-green-500/30 text-green-600 dark:text-green-400' : 'border-blue-500/30 text-blue-600 dark:text-blue-400';
 }
