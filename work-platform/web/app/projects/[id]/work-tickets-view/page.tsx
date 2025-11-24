@@ -29,7 +29,7 @@ export default async function WorkSessionsPage({ params, searchParams }: PagePro
   // Fetch project
   const { data: project } = await supabase
     .from('projects')
-    .select('id, name')
+    .select('id, name, basket_id')
     .eq('id', projectId)
     .maybeSingle();
 
