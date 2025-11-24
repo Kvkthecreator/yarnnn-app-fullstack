@@ -144,8 +144,8 @@ async def execute_reporting_workflow(
             try:
                 # Try as UUID first
                 recipe = await loader.load_recipe(recipe_id=request.recipe_id)
-            except RecipeValidationError:
-                # Fall back to slug
+            except Exception:
+                # Fall back to slug (handles both RecipeValidationError and UUID parsing errors)
                 recipe = await loader.load_recipe(slug=request.recipe_id)
 
             logger.info(f"[REPORTING WORKFLOW] Loaded recipe: {recipe.name} (v{recipe.version})")
