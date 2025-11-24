@@ -244,3 +244,69 @@ All code was already correct and expecting `work_ticket_id`.
 2. Monitor Render logs for successful emit_work_output calls
 3. Verify work_outputs table receives new records
 4. Close this issue once confirmed working
+
+---
+
+## UPDATE: Skills Invocation Fix (Nov 24, 15:00)
+
+### Secondary Issue Discovered
+
+After migration success, recipe executions were completing BUT producing **text outputs only**, not actual PPTX files.
+
+**Root Cause**: Format parameter (`pptx`) was buried in nested `output_specification` dict. Agent wasn't recognizing this as the trigger to invoke Skill tool.
+
+### Fix Applied
+
+Modified `reporting_agent_sdk.py` `execute_recipe()` method (lines 583-632):
+- Made format **top-level and prominent** in user prompt (🎯 PRIMARY REQUIREMENT header)
+- Added explicit Skill tool invocation workflow for file formats
+- Conditional format instructions only shown when format requires Skills (pdf/pptx/xlsx/docx)
+
+**Code change**:
+```python
+# Extract format and determine if Skill required
+format_value = output_spec.get('format', 'markdown')
+requires_skill = format_value in {'pdf', 'pptx', 'xlsx', 'docx'}
+
+# Build prominent format header (NEW)
+format_header = f"""🎯 **PRIMARY REQUIREMENT: OUTPUT FORMAT = {format_value.upper()}**
+⚠️ **CRITICAL**: You MUST use the Skill tool...
+**STEP-BY-STEP WORKFLOW**:
+1. INVOKE SKILL TOOL: skill_id="{format_value}"
+2. EMIT WORK OUTPUT: with file_id from Skill
+"""
+
+user_prompt = format_header + deliverable_intent + task_breakdown + ...
+```
+
+### Expected Outcome
+
+- ✅ Agent will invoke Skill tool when recipe specifies file format
+- ✅ work_outputs will have `file_id` populated (not NULL)
+- ✅ `generation_method` will be "skill" (not "text")
+- ✅ Files can be downloaded via Claude Files API
+
+### Testing Required
+
+```bash
+# Execute recipe via API
+curl -X POST 'https://yarnnn-app-fullstack.onrender.com/api/work/reporting/execute' \
+  -H 'Authorization: Bearer TOKEN' \
+  -d '{
+    "basket_id": "4eccb9a0-9fe4-4660-861e-b80a75a20824",
+    "recipe_id": "executive-summary-deck",
+    "recipe_parameters": {"slide_count": 5, "focus_area": "Q4 revenue"}
+  }'
+
+# Verify in database
+SELECT file_id, file_format, generation_method, title
+FROM work_outputs
+WHERE work_ticket_id = '<new_ticket_id>';
+
+# Expected:
+# file_id: file_011CNha... (not NULL)
+# file_format: pptx
+# generation_method: skill
+```
+
+**Status**: ⏳ Code committed, awaiting deployment and testing

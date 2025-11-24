@@ -580,7 +580,38 @@ Please generate a comprehensive {report_type} report in {format} format about {t
             for i, task in enumerate(task_breakdown)
         ])
 
-        user_prompt = f"""**Deliverable Intent**
+        # Extract format and determine if Skill tool is required
+        format_value = output_spec.get('format', 'markdown')
+        skill_formats = {'pdf', 'pptx', 'xlsx', 'docx'}
+        requires_skill = format_value in skill_formats
+
+        # Build prominent format instruction header
+        format_header = f"""🎯 **PRIMARY REQUIREMENT: OUTPUT FORMAT = {format_value.upper()}**
+"""
+
+        if requires_skill:
+            format_header += f"""
+⚠️ **CRITICAL**: You MUST use the Skill tool to generate this {format_value.upper()} file!
+
+**STEP-BY-STEP WORKFLOW**:
+1. **INVOKE SKILL TOOL**:
+   - Tool name: "Skill"
+   - Parameter: skill_id="{format_value}"
+   - Provide the content structure and data as specified in tasks below
+   - The Skill will return a file_id (Claude Files API identifier)
+
+2. **EMIT WORK OUTPUT**:
+   - Call emit_work_output tool
+   - Include: file_id=<value from Skill>, file_format="{format_value}", generation_method="skill"
+   - Add validation metadata
+
+**DO NOT generate text-only content**. The deliverable MUST be a {format_value.upper()} file created via Skill tool.
+
+---
+"""
+
+        user_prompt = format_header + f"""
+**Deliverable Intent**
 Purpose: {deliverable_intent.get('purpose', 'Generate report')}
 Audience: {deliverable_intent.get('audience', 'General audience')}
 Expected Outcome: {deliverable_intent.get('outcome', 'Professional deliverable')}
@@ -592,7 +623,7 @@ Expected Outcome: {deliverable_intent.get('outcome', 'Professional deliverable')
 {validation_instructions}
 
 **Expected Output Specification**:
-- Format: {output_spec.get('format', 'Unknown')}
+- Format: {format_value}
 - Required Sections: {', '.join(output_spec.get('required_sections', []))}
 - Validation Rules: {output_spec.get('validation_rules', {})}
 
