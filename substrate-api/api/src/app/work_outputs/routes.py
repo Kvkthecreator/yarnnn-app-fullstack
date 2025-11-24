@@ -32,15 +32,23 @@ router = APIRouter(prefix="/baskets", tags=["work-outputs"])
 class WorkOutputCreate(BaseModel):
     """Schema for creating a work output."""
     basket_id: str
-    work_session_id: str
+    work_ticket_id: str
     output_type: str
     agent_type: str
     title: str = Field(..., max_length=200)
-    body: dict
+    body: Optional[str] = None  # TEXT column (can be JSON string or plain text)
     confidence: float = Field(..., ge=0, le=1)
     source_context_ids: List[str] = Field(default_factory=list)
     tool_call_id: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
+
+    # File output fields (mutually exclusive with body)
+    file_id: Optional[str] = None
+    file_format: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
+    generation_method: str = "text"
+    skill_metadata: Optional[dict] = None
 
 
 class WorkOutputStatusUpdate(BaseModel):
@@ -54,11 +62,11 @@ class WorkOutputResponse(BaseModel):
     """Response schema for work output."""
     id: str
     basket_id: str
-    work_session_id: str
+    work_ticket_id: str
     output_type: str
     agent_type: str
     title: str
-    body: dict
+    body: Optional[str]  # TEXT column
     confidence: float
     source_context_ids: List[str]
     tool_call_id: Optional[str]
@@ -69,6 +77,14 @@ class WorkOutputResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     metadata: dict
+
+    # File output fields
+    file_id: Optional[str] = None
+    file_format: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
+    generation_method: Optional[str] = None
+    skill_metadata: Optional[dict] = None
 
 
 class WorkOutputListResponse(BaseModel):
@@ -175,7 +191,7 @@ async def create_work_output(
         # Create work output
         output_record = {
             "basket_id": str(basket_id),
-            "work_session_id": output_data.work_session_id,
+            "work_ticket_id": output_data.work_ticket_id,
             "output_type": output_data.output_type,
             "agent_type": output_data.agent_type,
             "title": output_data.title,
@@ -185,6 +201,12 @@ async def create_work_output(
             "tool_call_id": output_data.tool_call_id,
             "supervision_status": "pending_review",  # Always starts pending
             "metadata": output_data.metadata,
+            "file_id": output_data.file_id,
+            "file_format": output_data.file_format,
+            "file_size_bytes": output_data.file_size_bytes,
+            "mime_type": output_data.mime_type,
+            "generation_method": output_data.generation_method,
+            "skill_metadata": output_data.skill_metadata,
         }
 
         result = supabase_admin_client.table("work_outputs").insert(output_record).execute()
@@ -205,7 +227,7 @@ async def create_work_output(
 @router.get("/{basket_id}/work-outputs", response_model=WorkOutputListResponse)
 async def list_work_outputs(
     basket_id: str,
-    work_session_id: Optional[str] = Query(None),
+    work_ticket_id: Optional[str] = Query(None),
     supervision_status: Optional[str] = Query(None),
     agent_type: Optional[str] = Query(None),
     output_type: Optional[str] = Query(None),
@@ -218,7 +240,7 @@ async def list_work_outputs(
 
     Args:
         basket_id: Basket ID
-        work_session_id: Filter by work session
+        work_ticket_id: Filter by work ticket
         supervision_status: Filter by status (pending_review, approved, etc.)
         agent_type: Filter by agent type
         output_type: Filter by output type
@@ -236,8 +258,8 @@ async def list_work_outputs(
         query = supabase_admin_client.table("work_outputs").select("*").eq("basket_id", basket_id)
 
         # Apply filters
-        if work_session_id:
-            query = query.eq("work_session_id", work_session_id)
+        if work_ticket_id:
+            query = query.eq("work_ticket_id", work_ticket_id)
         if supervision_status:
             query = query.eq("supervision_status", supervision_status)
         if agent_type:

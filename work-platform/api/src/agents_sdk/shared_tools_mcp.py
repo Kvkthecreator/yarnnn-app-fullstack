@@ -118,13 +118,16 @@ When to use:
             # Call substrate-API to create work_output
             url = f"{SUBSTRATE_API_URL}/api/baskets/{basket_id}/work-outputs"
 
+            # Convert body dict to JSON string (work_outputs.body is TEXT column)
+            body_text = json.dumps(body) if isinstance(body, dict) else str(body)
+
             payload = {
                 "basket_id": basket_id,
                 "work_ticket_id": work_ticket_id,
                 "output_type": output_type,
                 "agent_type": agent_type,
                 "title": title,
-                "body": body,
+                "body": body_text,  # TEXT column (JSON string)
                 "confidence": confidence,
                 "source_context_ids": source_block_ids,  # Provenance
                 "metadata": {}

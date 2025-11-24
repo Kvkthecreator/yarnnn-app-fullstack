@@ -34,7 +34,8 @@ from .models import (
     TaskType,
 )
 from .task_params import validate_task_params
-from .executor import start_work_ticket_execution
+# NOTE: Legacy executor.py deleted - work tickets now executed via workflow routes
+# (workflow_research, workflow_content, workflow_reporting)
 
 router = APIRouter(prefix="/work", tags=["work-platform"])
 
@@ -604,71 +605,9 @@ async def list_work_tickets(
     return [WorkTicket(**dict(row)) for row in results]
 
 
-@router.post("/tickets/{ticket_id}/start", response_model=WorkTicket)
-async def start_session_execution(
-    ticket_id: UUID,
-    user: dict = Depends(verify_jwt),
-    db=Depends(get_db),
-):
-    """Start work session execution.
-
-    Initiates agent execution for a pending work session.
-    The session will move through statuses:
-    - PENDING → RUNNING → PAUSED (at checkpoint) or COMPLETED
-
-    Args:
-        ticket_id: Work session UUID
-        user: Authenticated user from JWT
-        db: Database connection
-
-    Returns:
-        Updated work session after execution
-
-    Raises:
-        404: Session not found or access denied
-        400: Session is not in PENDING status
-        500: Execution failed
-    """
-    workspace_id = _get_workspace_id(user)
-
-    # Verify session exists and user has access
-    check_query = """
-        SELECT status FROM work_tickets
-        WHERE id = :ticket_id AND workspace_id = :workspace_id
-    """
-    session = await db.fetch_one(
-        check_query,
-        {"ticket_id": str(ticket_id), "workspace_id": workspace_id}
-    )
-
-    if not session:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Work session {ticket_id} not found"
-        )
-
-    # Check session status
-    if session["status"] != WorkTicketStatus.PENDING.value:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot start session in {session['status']} status. Session must be PENDING."
-        )
-
-    # Start execution
-    try:
-        updated_session = await start_work_ticket_execution(ticket_id, db)
-        return updated_session
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Session execution failed: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error during execution: {str(e)}"
-        )
+# LEGACY ENDPOINT REMOVED: Work tickets are now executed via workflow-specific routes
+# (workflow_research.py, workflow_content.py, workflow_reporting.py)
+# This generic "start" endpoint is no longer used in Phase 2e architecture
 
 
 @router.get("/tickets/{ticket_id}", response_model=WorkTicket)
@@ -790,68 +729,6 @@ async def list_project_tickets(
     return [WorkTicket(**dict(row)) for row in results]
 
 
-@router.post("/tickets/{ticket_id}/start", response_model=WorkTicket)
-async def start_session_execution(
-    ticket_id: UUID,
-    user: dict = Depends(verify_jwt),
-    db=Depends(get_db),
-):
-    """Start work session execution.
-
-    Initiates agent execution for a pending work session.
-    The session will move through statuses:
-    - PENDING → RUNNING → PAUSED (at checkpoint) or COMPLETED
-
-    Args:
-        ticket_id: Work session UUID
-        user: Authenticated user from JWT
-        db: Database connection
-
-    Returns:
-        Updated work session after execution
-
-    Raises:
-        404: Session not found or access denied
-        400: Session is not in PENDING status
-        500: Execution failed
-    """
-    workspace_id = _get_workspace_id(user)
-
-    # Verify session exists and user has access
-    check_query = """
-        SELECT status FROM work_tickets
-        WHERE id = :ticket_id AND workspace_id = :workspace_id
-    """
-    session = await db.fetch_one(
-        check_query,
-        {"ticket_id": str(ticket_id), "workspace_id": workspace_id}
-    )
-
-    if not session:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Work session {ticket_id} not found"
-        )
-
-    # Check session status
-    if session["status"] != WorkTicketStatus.PENDING.value:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cannot start session in {session['status']} status. Session must be PENDING."
-        )
-
-    # Start execution
-    try:
-        updated_session = await start_work_ticket_execution(ticket_id, db)
-        return updated_session
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Session execution failed: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error during execution: {str(e)}"
-        )
+# LEGACY ENDPOINT REMOVED: Work tickets are now executed via workflow-specific routes
+# (workflow_research.py, workflow_content.py, workflow_reporting.py)
+# This generic "start" endpoint is no longer used in Phase 2e architecture
