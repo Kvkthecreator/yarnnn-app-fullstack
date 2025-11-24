@@ -43,11 +43,11 @@ export const PROJECT_SECTIONS: ProjectSection[] = [
     description: "Manage knowledge base and context items",
   },
   {
-    key: "work-sessions",
-    label: "Work Sessions",
+    key: "work-tickets",
+    label: "Work Tickets",
     icon: Clock,
-    href: (id) => `/projects/${id}/work-sessions`,
-    description: "View and manage agent work sessions",
+    href: (id) => `/projects/${id}/work-tickets-view`,
+    description: "View and manage agent work tickets",
   },
   {
     key: "settings",
