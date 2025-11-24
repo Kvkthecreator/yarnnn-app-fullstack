@@ -7,6 +7,7 @@
 
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { createRouteHandlerClient } from "@/lib/supabase/clients";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -14,24 +15,23 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // Get auth token from cookies
-    const cookieStore = await cookies();
-    const authToken = cookieStore.get("sb-access-token")?.value ||
-                     cookieStore.get("supabase-auth-token")?.value;
+    // Get Supabase session to extract JWT token
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data: { session } } = await supabase.auth.getSession();
 
-    if (!authToken) {
+    if (!session?.access_token) {
       return NextResponse.json(
         { detail: "Authentication required" },
         { status: 401 }
       );
     }
 
-    // Forward request to backend
-    const backendResponse = await fetch(`${BACKEND_URL}/work/content/execute`, {
+    // Forward request to backend with Supabase JWT
+    const backendResponse = await fetch(`${BACKEND_URL}/api/work/content/execute`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${authToken}`,
+        "Authorization": `Bearer ${session.access_token}`,
       },
       body: JSON.stringify(body),
     });
