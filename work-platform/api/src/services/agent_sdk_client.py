@@ -23,6 +23,7 @@ from agents_sdk import (
     create_reporting_agent_sdk,
 )
 from clients.substrate_client import SubstrateClient
+from shared.session import AgentSession
 
 logger = logging.getLogger(__name__)
 
@@ -49,23 +50,28 @@ class AgentSDKClient:
         self.substrate_client = substrate_client or SubstrateClient()
         logger.info("[AGENT SDK CLIENT] Initialized")
 
-    def create_agent(
+    async def create_agent(
         self,
         agent_type: str,
         basket_id: str | UUID,
         workspace_id: str,
         work_ticket_id: str,
         user_id: str,
+        agent_session: Optional[AgentSession] = None,
     ):
         """
         Create agent instance for work session execution.
+
+        Uses pre-existing agent_session from project scaffolding for conversation continuity.
+        If no session provided, will create/fetch one (for backward compatibility).
 
         Args:
             agent_type: Type of agent (research, content, reporting)
             basket_id: Basket ID for agent context
             workspace_id: Workspace ID for authorization
-            work_ticket_id: Work ticket ID for execution tracking
+            work_ticket_id: Work ticket ID for execution tracking (output tagging only)
             user_id: User ID for governance operations
+            agent_session: Pre-existing AgentSession from scaffolding (recommended)
 
         Returns:
             Agent instance (ResearchAgent, ContentCreatorAgent, or ReportingAgent)
@@ -74,15 +80,31 @@ class AgentSDKClient:
             ValueError: If agent_type is invalid
             ImportError: If SDK not available
         """
-        logger.info(
-            f"[AGENT SDK CLIENT] Creating {agent_type} agent for basket {basket_id}, work_ticket {work_ticket_id}"
-        )
+        # Get or create agent session (persistent, one per basket+agent_type)
+        if not agent_session:
+            logger.info(
+                f"[AGENT SDK CLIENT] No session provided, creating/fetching for "
+                f"{agent_type} agent, basket {basket_id}"
+            )
+            agent_session = await AgentSession.get_or_create(
+                basket_id=str(basket_id),
+                workspace_id=workspace_id,
+                agent_type=agent_type,
+                user_id=user_id,
+            )
+        else:
+            logger.info(
+                f"[AGENT SDK CLIENT] Using provided session {agent_session.id} for "
+                f"{agent_type} agent (basket={basket_id}, work_ticket={work_ticket_id})"
+            )
 
+        # Create agent SDK instance with persistent session + work_ticket_id for output tracking
         if agent_type == "research":
             return create_research_agent_sdk(
                 basket_id=str(basket_id),
                 workspace_id=workspace_id,
                 work_ticket_id=work_ticket_id,
+                session=agent_session,  # Pass session for conversation continuity
                 user_id=user_id
             )
         elif agent_type == "content":
@@ -90,6 +112,7 @@ class AgentSDKClient:
                 basket_id=str(basket_id),
                 workspace_id=workspace_id,
                 work_ticket_id=work_ticket_id,
+                session=agent_session,  # Pass session for conversation continuity
                 user_id=user_id
             )
         elif agent_type == "reporting":
@@ -97,6 +120,7 @@ class AgentSDKClient:
                 basket_id=str(basket_id),
                 workspace_id=workspace_id,
                 work_ticket_id=work_ticket_id,
+                session=agent_session,  # Pass session for conversation continuity
                 user_id=user_id
             )
         else:

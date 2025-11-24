@@ -26,6 +26,7 @@ import os
 from services.agent_sdk_client import AgentSDKClient
 from services.checkpoint_handler import CheckpointHandler
 from clients.substrate_client import SubstrateClient
+from shared.session import AgentSession
 
 logger = logging.getLogger(__name__)
 
@@ -116,18 +117,44 @@ class WorkTicketExecutor:
             await self._update_session_status(ticket_id, "running")
 
             # ================================================================
-            # Step 3: Create agent instance
+            # Step 3: Fetch pre-existing agent_session (from scaffolding)
             # ================================================================
-            agent = self.agent_client.create_agent(
+            # Work tickets are linked to agent_sessions (persistent, one per basket+agent_type)
+            # This enables conversation continuity across multiple work requests
+            agent_session_id = session["agent_session_id"]
+            logger.info(f"[WORK SESSION EXECUTOR] Fetching agent_session {agent_session_id}")
+
+            agent_session_response = self.supabase.table("agent_sessions").select(
+                "*"
+            ).eq("id", agent_session_id).single().execute()
+
+            if not agent_session_response.data:
+                raise WorkTicketExecutionError(
+                    f"Agent session {agent_session_id} not found "
+                    f"(work_ticket {ticket_id} references non-existent session)"
+                )
+
+            # Load AgentSession object from DB data
+            agent_session = AgentSession(**agent_session_response.data)
+            logger.info(
+                f"[WORK SESSION EXECUTOR] Using agent_session {agent_session.id} "
+                f"(type={agent_session.agent_type}, basket={agent_session.basket_id})"
+            )
+
+            # ================================================================
+            # Step 4: Create agent instance with pre-existing session
+            # ================================================================
+            agent = await self.agent_client.create_agent(
                 agent_type=session["task_type"],
                 basket_id=session["basket_id"],
                 workspace_id=session["workspace_id"],
                 work_ticket_id=ticket_id,
-                user_id=session["initiated_by_user_id"]
+                user_id=session["initiated_by_user_id"],
+                agent_session=agent_session  # Pass persistent session for conversation continuity
             )
 
             # ================================================================
-            # Step 4: Provision context envelope (if available)
+            # Step 5: Provision context envelope (if available)
             # ================================================================
             context_envelope = {}
             if session.get("task_document_id"):
@@ -138,7 +165,7 @@ class WorkTicketExecutor:
                 )
 
             # ================================================================
-            # Step 5: Execute agent task
+            # Step 6: Execute agent task
             # ================================================================
             status, outputs, checkpoint_reason = await self.agent_client.execute_task(
                 agent=agent,
