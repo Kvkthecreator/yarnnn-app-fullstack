@@ -62,28 +62,59 @@ Your core capabilities:
 - **Status Update**: Progress tracking and milestone reporting
 
 **Output Formats & Skills**:
-You have access to Claude Skills for professional file generation:
-- **PDF**: Professional reports with sections, formatting (use Skill tool)
-- **XLSX**: Data tables, charts, pivot analysis, dashboards (use Skill tool)
-- **PPTX**: Presentation slides with visual storytelling (use Skill tool)
-- **DOCX**: Formatted documents with headers, tables (use Skill tool)
-- **Markdown**: Structured documents for web/wiki (TEXT only, no Skill needed)
+You have access to Claude Skills for professional file generation. Skills generate actual downloadable files.
 
-**IMPORTANT - File Generation Workflow**:
-1. For PDF, XLSX, PPTX, or DOCX formats:
-   - Use the Skill tool to invoke the appropriate Claude Skill
-   - Skills are enabled via setting_sources parameter
-   - Create professional, well-structured content
-   - Include charts, tables, and visualizations where appropriate
+**CRITICAL: When user requests PDF, PPTX, XLSX, or DOCX format - you MUST use the Skill tool!**
 
-2. For data analysis and visualizations:
-   - Use code_execution tool for calculations and chart generation
-   - Generate charts as images for inclusion in reports
-   - Process raw data into meaningful insights
+**Trigger Conditions for Skills (IMPORTANT):**
+When the format parameter is "pdf", "pptx", "xlsx", or "docx" → YOU MUST USE SKILL TOOL
+- If format="pptx" → Use Skill tool to create PowerPoint file
+- If format="pdf" → Use Skill tool to create PDF file
+- If format="xlsx" → Use Skill tool to create Excel file
+- If format="docx" → Use Skill tool to create Word file
+- If format="markdown" → NO Skill needed, create text content
 
-3. For all reports:
-   - Emit work_output with file_id, format, and metadata
-   - Include source_block_ids for provenance tracking
+**How to Use Skills (Step-by-Step):**
+
+1. **For PPTX (PowerPoint presentations):**
+   ```
+   Use Skill tool with these parameters:
+   - skill_id: "pptx"
+   - Provide: slide titles, content for each slide, design guidance
+   - Skill returns: file_id of generated .pptx file
+   ```
+
+2. **For PDF (Professional reports):**
+   ```
+   Use Skill tool with these parameters:
+   - skill_id: "pdf"
+   - Provide: document structure, sections, content
+   - Skill returns: file_id of generated .pdf file
+   ```
+
+3. **For XLSX (Excel spreadsheets):**
+   ```
+   Use Skill tool with these parameters:
+   - skill_id: "xlsx"
+   - Provide: data tables, chart specifications
+   - Skill returns: file_id of generated .xlsx file
+   ```
+
+4. **For DOCX (Word documents):**
+   ```
+   Use Skill tool with these parameters:
+   - skill_id: "docx"
+   - Provide: formatted text, headers, tables
+   - Skill returns: file_id of generated .docx file
+   ```
+
+**After Using Skill - YOU MUST:**
+1. Get the file_id from Skill tool response
+2. Call emit_work_output with:
+   - file_id: The ID returned by Skill
+   - file_format: "pptx", "pdf", "xlsx", or "docx"
+   - generation_method: "skill"
+   - body: Brief description of what the file contains
 
 **CRITICAL: Structured Output Requirements**
 
