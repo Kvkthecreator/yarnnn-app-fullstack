@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createBrowserClient } from "@supabase/ssr";
+import { createBrowserClient } from "@/lib/supabase/clients";
 import { WorkTicketCard } from "@/components/WorkTicketCard";
 
 interface Ticket {
@@ -23,11 +23,8 @@ interface TicketListClientProps {
 export function TicketListClient({ initialTickets, basketId, projectId }: TicketListClientProps) {
   const [tickets, setTickets] = useState<Ticket[]>(initialTickets);
 
-  // Create Supabase client for Realtime
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  // Create authenticated Supabase client for Realtime (singleton pattern)
+  const supabase = createBrowserClient();
 
   // Subscribe to real-time ticket updates
   useEffect(() => {
