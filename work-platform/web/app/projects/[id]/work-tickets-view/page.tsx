@@ -1,7 +1,7 @@
 /**
- * Page: /projects/[id]/work-sessions - Work Sessions List
+ * Page: /projects/[id]/work-tickets-view - Work Tickets List
  *
- * Shows all work sessions for a project with filtering and status indicators.
+ * Shows all work tickets for a project with filtering and status indicators.
  */
 import { cookies } from "next/headers";
 import { createServerComponentClient } from "@/lib/supabase/clients";
@@ -285,8 +285,8 @@ function StatusFilterCard({
   if (agentFilter) params.set('agent', agentFilter);
   const query = params.toString();
   const href = query
-    ? `/projects/${projectId}/work-sessions?${query}`
-    : `/projects/${projectId}/work-sessions`;
+    ? `/projects/${projectId}/work-tickets-view?${query}`
+    : `/projects/${projectId}/work-tickets-view`;
   const accentConfig = accent ? ACCENT_STYLES[accent] : null;
   const textClass = accentConfig ? accentConfig.text : "text-muted-foreground";
 
@@ -378,8 +378,8 @@ function AgentFilterPill({
   if (agentId) params.set('agent', agentId);
   const query = params.toString();
   const href = query
-    ? `/projects/${projectId}/work-sessions?${query}`
-    : `/projects/${projectId}/work-sessions`;
+    ? `/projects/${projectId}/work-tickets-view?${query}`
+    : `/projects/${projectId}/work-tickets-view`;
 
   return (
     <Link href={href}>

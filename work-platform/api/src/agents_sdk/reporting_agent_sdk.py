@@ -591,21 +591,22 @@ Please generate a comprehensive {report_type} report in {format} format about {t
 
         if requires_skill:
             format_header += f"""
-⚠️ **CRITICAL**: You MUST use the Skill tool to generate this {format_value.upper()} file!
+⚠️ **YOU MUST FOLLOW THIS EXACT WORKFLOW**:
 
-**STEP-BY-STEP WORKFLOW**:
-1. **INVOKE SKILL TOOL**:
-   - Tool name: "Skill"
-   - Parameter: skill_id="{format_value}"
-   - Provide the content structure and data as specified in tasks below
-   - The Skill will return a file_id (Claude Files API identifier)
+**STEP 1: Generate the {format_value.upper()} file**
+   - Use the Skill tool with skill_id="{format_value}"
+   - Provide all content structure and data from the tasks below
+   - The Skill will return a file_id
 
-2. **EMIT WORK OUTPUT**:
-   - Call emit_work_output tool
-   - Include: file_id=<value from Skill>, file_format="{format_value}", generation_method="skill"
-   - Add validation metadata
+**STEP 2: Save the output (REQUIRED)**
+   - Call emit_work_output tool with:
+     * file_id: <the file_id from Step 1>
+     * file_format: "{format_value}"
+     * generation_method: "skill"
+     * title: Descriptive title
+     * output_type: "report_draft"
 
-**DO NOT generate text-only content**. The deliverable MUST be a {format_value.upper()} file created via Skill tool.
+**BOTH STEPS ARE MANDATORY**. If you skip Step 2, your work will not be saved!
 
 ---
 """
