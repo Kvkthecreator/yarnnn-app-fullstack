@@ -124,6 +124,7 @@ app.add_middleware(
         "/api/tp/capabilities",  # TP capabilities endpoint (public, no auth needed)
         "/api/diagnostics/skills",  # Skills diagnostic endpoint (no auth for debugging)
         "/api/diagnostics/agent-config",  # Agent config diagnostic (no auth for debugging)
+        "/api/diagnostics/test-skill-invocation",  # Skill test endpoint (no auth for debugging)
     },
     exempt_prefixes={
         "/health",
