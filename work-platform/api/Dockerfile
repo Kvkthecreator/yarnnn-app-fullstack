@@ -17,10 +17,9 @@ RUN node --version && npm --version
 
 # Install Claude Code CLI globally
 # The Python SDK (claude-agent-sdk) wraps this CLI, so it must be installed
-RUN npm install -g @anthropic-ai/claude-code
-
-# Verify Claude CLI is accessible (binary is named 'claude')
-RUN which claude && claude --version
+RUN npm install -g @anthropic-ai/claude-code && \
+    which claude && \
+    claude --version
 
 # Set working directory
 WORKDIR /app
