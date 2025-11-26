@@ -961,20 +961,24 @@ async def test_inter_agent_flow():
         query = f"""Based on the research findings provided in the substrate context, create engaging social media content for two platforms:
 
 1. TWITTER POST: Create a concise, engaging Twitter thread (3-4 tweets) about Claude Agent SDK and AI development trends
-   - Use the Twitter specialist sub-agent
+   - INVOKE the twitter_specialist subagent directly (DO NOT use Task tool)
    - Follow platform best practices (280 chars per tweet, hooks, engagement)
-   - Use emit_work_output with output_type="content_draft"
+   - Use emit_work_output with output_type="content_draft" and metadata.platform="twitter"
 
 2. LINKEDIN POST: Create a professional LinkedIn post about the same topic
-   - Use the LinkedIn specialist sub-agent
+   - INVOKE the linkedin_specialist subagent directly (DO NOT use Task tool)
    - Professional thought leadership tone
    - Include insights from the research findings
-   - Use emit_work_output with output_type="content_draft"
+   - Use emit_work_output with output_type="content_draft" and metadata.platform="linkedin"
 
-IMPORTANT: You MUST delegate to your platform specialist sub-agents (Twitter and LinkedIn specialists).
-Review the substrate context first to understand the research findings, then create platform-optimized content.
+CRITICAL INSTRUCTIONS:
+- You MUST invoke your native subagents (twitter_specialist, linkedin_specialist) directly
+- DO NOT use the Task tool - use native SDK subagent delegation
+- The SDK will automatically handle delegation with shared context
+- Each subagent will create platform-optimized content
+- Emit each piece of content as a separate work_output with platform metadata
 
-Each piece of content should be emitted as a separate work_output."""
+Review the substrate context first to understand the research findings, then invoke the appropriate specialists."""
 
         # Track execution
         tool_calls = []
