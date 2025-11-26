@@ -63,6 +63,7 @@ async def check_skills_availability():
         "PATH": os.getenv("PATH", "")[:200] + "...",  # Truncate PATH
         "HOME": os.getenv("HOME"),
         "USER": os.getenv("USER"),
+        "ANTHROPIC_API_KEY": "***" + os.getenv("ANTHROPIC_API_KEY", "NOT_SET")[-4:] if os.getenv("ANTHROPIC_API_KEY") else "NOT_SET",
     }
 
     # Check if Claude CLI is installed/accessible (binary name is 'claude')
