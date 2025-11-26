@@ -7,8 +7,13 @@ This package contains SDK-based agents that use:
 - ClaudeSDKClient for session management and conversation continuity
 - Native subagents via ClaudeAgentOptions.agents parameter
 - Skills integration via setting_sources parameter
-- SubstrateMemoryAdapter (BFF pattern for knowledge base access)
+- SubstrateQueryAdapter for on-demand substrate queries (BFF pattern)
 - Structured outputs via emit_work_output tool
+
+Architecture (2025-11):
+- Session: Agent SDK manages conversation history
+- Substrate: Queried on-demand via SubstrateQueryAdapter.query()
+- WorkBundle: Metadata + asset pointers only (NOT substrate blocks)
 
 Agents (ALL using official SDK):
 - ThinkingPartnerAgentSDK: Multi-agent orchestration gateway

@@ -894,23 +894,8 @@ async def test_inter_agent_flow():
                 "basket_id": production_basket_id
             }
 
-        # Step 2: Create WorkBundle with research findings as substrate blocks
-        print("\n[STEP 2] Creating WorkBundle with research findings as substrate context...", flush=True)
-
-        # Transform work_outputs into substrate_blocks format
-        substrate_blocks = []
-        for output in work_outputs:
-            # Convert work_output to substrate block format
-            block = {
-                "id": output["id"],
-                "title": output["title"],
-                "output_type": output["output_type"],
-                "content": output["body"],
-                "confidence": output["confidence"],
-                "created_at": output["created_at"],
-                "source": "research_agent"
-            }
-            substrate_blocks.append(block)
+        # Step 2: Create WorkBundle (metadata only) + SubstrateQueryAdapter (on-demand)
+        print("\n[STEP 2] Creating WorkBundle + SubstrateQueryAdapter...", flush=True)
 
         # Use an existing work_ticket_id from production to avoid foreign key constraint
         # (emit_work_output requires work_ticket_id to exist in work_tickets table)
@@ -922,6 +907,7 @@ async def test_inter_agent_flow():
                 "message": "No work_outputs found with valid work_ticket_id"
             }
 
+        # WorkBundle (metadata only - NO substrate_blocks)
         bundle = WorkBundle(
             work_request_id="test-request-inter-agent",
             work_ticket_id=existing_work_ticket_id,  # Use existing work_ticket_id to avoid FK constraint
@@ -931,15 +917,23 @@ async def test_inter_agent_flow():
             task="Create Twitter and LinkedIn posts from research findings on Claude Agent SDK and AI development trends",
             agent_type="content",
             priority="medium",
-            substrate_blocks=substrate_blocks,
             reference_assets=[],
             agent_config={},
             user_requirements={}
         )
 
-        print(f"[STEP 2] ✅ WorkBundle created:", flush=True)
+        # SubstrateQueryAdapter for on-demand substrate access
+        from adapters.substrate_adapter import SubstrateQueryAdapter
+        substrate_adapter = SubstrateQueryAdapter(
+            basket_id=production_basket_id,
+            workspace_id="test-workspace",
+            agent_type="content",
+            work_ticket_id=existing_work_ticket_id,
+        )
+
+        print(f"[STEP 2] ✅ Context created:", flush=True)
         print(f"  - Work ticket ID (existing): {existing_work_ticket_id}", flush=True)
-        print(f"  - Substrate blocks: {len(bundle.substrate_blocks)}", flush=True)
+        print(f"  - SubstrateQueryAdapter for on-demand queries", flush=True)
         print(f"  - Task: {bundle.task[:60]}...", flush=True)
 
         # Step 3: Initialize Content Agent with WorkBundle
@@ -950,10 +944,11 @@ async def test_inter_agent_flow():
             workspace_id=bundle.workspace_id,
             work_ticket_id=bundle.work_ticket_id,
             enabled_platforms=["twitter", "linkedin"],  # Enable Twitter and LinkedIn specialists
-            bundle=bundle  # Pass pre-loaded substrate context
+            substrate=substrate_adapter,  # On-demand substrate queries
+            bundle=bundle  # WorkBundle (metadata only)
         )
 
-        print(f"[STEP 3] ✅ ContentAgentSDK initialized with bundle", flush=True)
+        print(f"[STEP 3] ✅ ContentAgentSDK initialized with substrate adapter + bundle", flush=True)
 
         # Step 4: Execute content creation workflow
         print("\n[STEP 4] Executing content creation workflow...", flush=True)
@@ -1033,8 +1028,8 @@ Review the substrate context first to understand the research findings, then inv
         # Step 5: Validation
         print("\n[STEP 5] Validation Results:", flush=True)
         print(f"  ✅ Research outputs loaded: {len(work_outputs)}", flush=True)
-        print(f"  ✅ WorkBundle created with substrate blocks: {len(substrate_blocks)}", flush=True)
-        print(f"  ✅ Content Agent initialized with bundle", flush=True)
+        print(f"  ✅ SubstrateQueryAdapter for on-demand queries", flush=True)
+        print(f"  ✅ Content Agent initialized with substrate adapter + bundle", flush=True)
         print(f"  ✅ Tool calls made: {len(tool_calls)}", flush=True)
         print(f"  {'✅' if emit_count > 0 else '❌'} emit_work_output called: {emit_count} times", flush=True)
         print(f"  {'✅' if subagent_used else '⚠️'} Sub-agent delegation: {subagent_used}", flush=True)
@@ -1044,7 +1039,6 @@ Review the substrate context first to understand the research findings, then inv
 
         success = (
             len(work_outputs) > 0 and
-            len(substrate_blocks) > 0 and
             emit_count > 0
         )
 
@@ -1055,7 +1049,7 @@ Review the substrate context first to understand the research findings, then inv
             "status": "success" if success else "partial",
             "validation": {
                 "research_outputs_loaded": len(work_outputs),
-                "substrate_blocks_created": len(substrate_blocks),
+                "substrate_adapter_created": True,
                 "tool_calls": len(tool_calls),
                 "emit_work_output_count": emit_count,
                 "subagent_delegation": subagent_used,

@@ -155,20 +155,10 @@ async def execute_research_workflow(
             f"work_ticket={work_ticket_id}"
         )
 
-        # Step 5: Load context (WorkBundle pattern)
-        logger.info(f"[RESEARCH WORKFLOW] Loading context for basket {request.basket_id}")
+        # Step 5: Create WorkBundle (metadata only) + SubstrateQueryAdapter (on-demand)
+        logger.info(f"[RESEARCH WORKFLOW] Creating context for basket {request.basket_id}")
 
-        # 5a. Load substrate blocks (approved knowledge)
-        blocks_response = supabase.table("blocks").select(
-            "id, content, semantic_type, state, created_at, metadata"
-        ).eq("basket_id", request.basket_id).in_(
-            "state", ["ACCEPTED", "LOCKED", "CONSTANT"]  # Only approved blocks
-        ).order("created_at", ascending=False).limit(200).execute()
-
-        substrate_blocks = blocks_response.data or []
-        logger.info(f"[RESEARCH WORKFLOW] Loaded {len(substrate_blocks)} substrate blocks")
-
-        # 5b. Load prior work outputs (recent research to avoid duplication)
+        # 5a. Load prior work outputs (recent research to avoid duplication)
         prior_outputs_response = supabase.table("work_outputs").select(
             "id, title, output_type, body, confidence, created_at"
         ).eq("basket_id", request.basket_id).eq(
@@ -180,7 +170,7 @@ async def execute_research_workflow(
         prior_work_outputs = prior_outputs_response.data or []
         logger.info(f"[RESEARCH WORKFLOW] Loaded {len(prior_work_outputs)} prior outputs")
 
-        # 5c. Load reference assets (documents, screenshots, etc.)
+        # 5b. Load reference assets (documents, screenshots, etc.)
         assets_response = supabase.table("documents").select(
             "id, title, document_type, metadata"
         ).eq("basket_id", request.basket_id).execute()
@@ -188,7 +178,8 @@ async def execute_research_workflow(
         reference_assets = assets_response.data or []
         logger.info(f"[RESEARCH WORKFLOW] Loaded {len(reference_assets)} reference assets")
 
-        # 5d. Create WorkBundle with loaded context (agent_config uses defaults)
+        # 5c. Create WorkBundle (metadata only - NO substrate_blocks)
+        # Agents query substrate on-demand via SubstrateQueryAdapter
         context_bundle = WorkBundle(
             work_request_id=work_request_id,
             work_ticket_id=work_ticket_id,
@@ -198,14 +189,23 @@ async def execute_research_workflow(
             task=request.task_description,
             agent_type="research",
             priority="medium",
-            substrate_blocks=substrate_blocks,
             reference_assets=reference_assets,
             agent_config={},  # Use defaults
         )
 
+        # 5d. Create SubstrateQueryAdapter for on-demand substrate access
+        from adapters.substrate_adapter import SubstrateQueryAdapter
+        substrate_adapter = SubstrateQueryAdapter(
+            basket_id=request.basket_id,
+            workspace_id=workspace_id,
+            agent_type="research",
+            work_ticket_id=work_ticket_id,
+        )
+
         logger.info(
-            f"[RESEARCH WORKFLOW] WorkBundle created: {len(substrate_blocks)} blocks, "
-            f"{len(reference_assets)} assets, {len(prior_work_outputs)} prior outputs"
+            f"[RESEARCH WORKFLOW] Context created: "
+            f"{len(reference_assets)} assets, {len(prior_work_outputs)} prior outputs, "
+            f"SubstrateQueryAdapter for on-demand queries"
         )
 
         # Step 6: Update work_ticket status to running
@@ -217,13 +217,14 @@ async def execute_research_workflow(
         # Step 7: Execute ResearchAgentSDK with context
         logger.info(f"[RESEARCH WORKFLOW] Executing ResearchAgentSDK")
 
-        # Initialize ResearchAgentSDK with bundle
+        # Initialize ResearchAgentSDK with bundle + substrate adapter
         research_sdk = ResearchAgentSDK(
             basket_id=request.basket_id,
             workspace_id=workspace_id,
             work_ticket_id=work_ticket_id,
             session=research_session,
-            bundle=context_bundle,  # Pass WorkBundle with loaded context
+            substrate=substrate_adapter,  # On-demand substrate queries
+            bundle=context_bundle,  # WorkBundle (metadata only)
         )
 
         # Build enhanced prompt with prior work context

@@ -1,11 +1,13 @@
 """
-Memory adapter: SDK MemoryProvider → substrate_client (Phase 3 BFF pattern).
+Substrate Query Adapter: On-demand substrate access for agents.
 
-This adapter makes the Claude Agent SDK's MemoryProvider interface compatible
-with our substrate_client HTTP client, preserving the BFF architecture.
+Architecture (2025-11):
+- Agents query substrate ON-DEMAND via SubstrateQueryAdapter.query()
+- No pre-loading of substrate context into WorkBundle
+- Lazy loading = token efficiency + agent autonomy
 
-Architecture flow:
-SDK agents → SubstrateMemoryAdapter → substrate_client → substrate-api
+Flow:
+Agent execution → substrate.query("brand voice examples") → substrate_client → substrate-api
 """
 
 from __future__ import annotations
@@ -33,9 +35,11 @@ from clients.substrate_client import get_substrate_client
 logger = logging.getLogger(__name__)
 
 
-class SubstrateMemoryAdapter(MemoryProvider):
+class SubstrateQueryAdapter(MemoryProvider):
     """
-    Adapter that implements SDK's MemoryProvider interface using substrate_client.
+    On-demand substrate query adapter for YARNNN agents.
+
+    Implements SDK's MemoryProvider interface using substrate_client HTTP calls.
 
     All substrate operations go through HTTP (Phase 3 BFF pattern):
     - Query → get_basket_blocks()
@@ -57,13 +61,13 @@ class SubstrateMemoryAdapter(MemoryProvider):
         self,
         basket_id: str | UUID,
         workspace_id: str,
-        user_token: Optional[str] = None,  # NEW: User JWT token for substrate-API auth
+        user_token: Optional[str] = None,  # User JWT token for substrate-API auth
         agent_type: Optional[str] = None,
         project_id: Optional[str] = None,
         work_ticket_id: Optional[str] = None
     ):
         """
-        Initialize memory adapter with agent execution context.
+        Initialize substrate query adapter with agent execution context.
 
         Args:
             basket_id: Basket ID to operate on
@@ -89,7 +93,7 @@ class SubstrateMemoryAdapter(MemoryProvider):
         self._config_cache: Optional[Dict] = None
 
         logger.info(
-            f"Initialized SubstrateMemoryAdapter for basket {self.basket_id}, "
+            f"Initialized SubstrateQueryAdapter for basket {self.basket_id}, "
             f"agent_type={agent_type}, project_id={project_id}"
         )
 
@@ -208,7 +212,7 @@ class SubstrateMemoryAdapter(MemoryProvider):
         Returns:
             List of Context items (first item contains assets + config in metadata)
         """
-        logger.info(f"Querying substrate memory: query='{query[:50]}...', limit={limit}")
+        logger.info(f"Querying substrate: query='{query[:50]}...', limit={limit}")
 
         try:
             # Extract filter parameters
@@ -272,7 +276,7 @@ class SubstrateMemoryAdapter(MemoryProvider):
         Returns:
             ID of created dump/block
         """
-        logger.info("Storing context in substrate memory")
+        logger.info("Storing context in substrate")
 
         # Call substrate-api via HTTP (Phase 3 BFF)
         result = self.client.create_dump(

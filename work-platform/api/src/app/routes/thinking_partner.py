@@ -349,6 +349,6 @@ async def get_tp_capabilities():
             }
         },
         "agents_available": ["research", "content", "reporting"],
-        "memory_access": "Full substrate knowledge base via SubstrateMemoryAdapter",
+        "substrate_access": "On-demand queries via SubstrateQueryAdapter",
         "session_management": "AgentSession with Claude session resumption"
     }

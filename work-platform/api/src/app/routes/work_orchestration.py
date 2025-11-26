@@ -732,7 +732,7 @@ async def get_agent_capabilities():
         },
         "architecture": {
             "pattern": "SDK + Adapters + BFF",
-            "adapters": ["SubstrateMemoryAdapter", "SubstrateGovernanceAdapter", "AuthAdapter"],
+            "adapters": ["SubstrateQueryAdapter", "SubstrateGovernanceAdapter", "AuthAdapter"],
             "backend": "substrate-api (via substrate_client HTTP)"
         }
     }

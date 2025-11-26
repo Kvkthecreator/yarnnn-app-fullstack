@@ -38,7 +38,7 @@ from uuid import uuid4
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AgentDefinition
 
-from adapters.memory_adapter import SubstrateMemoryAdapter
+from adapters.substrate_adapter import SubstrateQueryAdapter
 from shared.work_output_tools import EMIT_WORK_OUTPUT_TOOL, parse_work_outputs_from_response
 from shared.session import AgentSession
 
@@ -285,7 +285,7 @@ class ThinkingPartnerAgentSDK:
     - ClaudeSDKClient for built-in session management
     - Conversation continuity across multiple exchanges
     - Tool integration (work_orchestration, infra_reader, etc.)
-    - Memory access via SubstrateMemoryAdapter
+    - Substrate access via SubstrateQueryAdapter (on-demand queries)
     """
 
     def __init__(
@@ -314,10 +314,11 @@ class ThinkingPartnerAgentSDK:
         self.user_token = user_token
         self.model = model
 
-        # NO memory adapter for TP chat
+        # NO substrate adapter for TP chat phase
         # Substrate queries happen during staging phase (work_orchestration tool)
-        self.memory = None
-        logger.info(f"TP initialized (chat-only mode, no substrate memory)")
+        # Specialists get SubstrateQueryAdapter when delegated
+        self.substrate = None
+        logger.info(f"TP initialized (chat-only mode, substrate queries happen at staging)")
 
         # Get API key
         if anthropic_api_key is None:
@@ -489,7 +490,7 @@ class ThinkingPartnerAgentSDK:
 - Basket ID: {self.basket_id}
 - Workspace ID: {self.workspace_id}
 - User ID: {self.user_id}
-- Memory: {"Available" if self.memory else "Not configured"}
+- Substrate: {"Available" if self.substrate else "Queries at staging boundary"}
 """
         return prompt
 
@@ -623,29 +624,6 @@ Examples:
             }
         }
 
-    async def _load_substrate_blocks(self) -> list:
-        """
-        Load substrate blocks (long-term knowledge base) during staging.
-
-        Returns:
-            List of block dicts
-        """
-        try:
-            from clients.substrate_client import SubstrateClient
-
-            logger.debug(f"Staging: Loading substrate blocks for basket={self.basket_id}, has_token={bool(self.user_token)}")
-            client = SubstrateClient(user_token=self.user_token)
-            blocks = client.get_basket_blocks(
-                basket_id=self.basket_id,
-                states=["ACCEPTED", "LOCKED"],
-                limit=50
-            )
-            logger.info(f"Staging: Loaded {len(blocks)} substrate blocks")
-            return blocks
-        except Exception as e:
-            logger.error(f"Failed to load substrate blocks (basket={self.basket_id}): {e}", exc_info=True)
-            return []
-
     async def _load_reference_assets(self, agent_type: str) -> list:
         """
         Load reference assets (task-specific resources) during staging.
@@ -743,22 +721,29 @@ Examples:
 
         try:
             # ================================================================
-            # PHASE 2: STAGING - Load all context ONCE at staging boundary
+            # PHASE 2: STAGING - Create context adapters + load metadata
             # ================================================================
 
-            logger.info(f"STAGING PHASE: Loading context for {agent_type} work request")
+            logger.info(f"STAGING PHASE: Creating context for {agent_type} work request")
 
-            # Query 1: Load substrate blocks (long-term knowledge base)
-            substrate_blocks = await self._load_substrate_blocks()
+            # Create SubstrateQueryAdapter for on-demand substrate access
+            # (agents query substrate lazily, not pre-loaded)
+            from adapters.substrate_adapter import SubstrateQueryAdapter
+            substrate_adapter = SubstrateQueryAdapter(
+                basket_id=self.basket_id,
+                workspace_id=self.workspace_id,
+                user_token=self.user_token,
+                agent_type=agent_type,
+            )
 
-            # Query 2: Load reference assets (task-specific resources)
+            # Load reference assets (task-specific resources)
             reference_assets = await self._load_reference_assets(agent_type)
 
-            # Query 3: Load agent configuration (agent settings)
+            # Load agent configuration (agent settings)
             agent_config = await self._load_agent_config(agent_type)
 
             logger.info(
-                f"STAGING COMPLETE: {len(substrate_blocks)} blocks, "
+                f"STAGING COMPLETE: SubstrateQueryAdapter created, "
                 f"{len(reference_assets)} assets, config={bool(agent_config)}"
             )
 
@@ -807,7 +792,7 @@ Examples:
             logger.info(f"Created work_request: {work_request_id}")
 
             # ================================================================
-            # Create WorkBundle with pre-loaded context
+            # Create WorkBundle (metadata only - NO substrate_blocks)
             # ================================================================
 
             from agents_sdk.work_bundle import WorkBundle
@@ -821,13 +806,12 @@ Examples:
                 task=task,
                 agent_type=agent_type,
                 priority=priority,
-                substrate_blocks=substrate_blocks,
                 reference_assets=reference_assets,
                 agent_config=agent_config,
                 user_requirements=parameters  # Additional params from chat
             )
 
-            logger.info(f"WorkBundle created:\n{bundle.get_context_summary()}")
+            logger.info(f"WorkBundle created (metadata only):\n{bundle.get_context_summary()}")
 
             # ================================================================
             # PHASE 3: DELEGATION - Pass bundle to specialist agent
@@ -843,7 +827,7 @@ Examples:
             km_loader = KnowledgeModuleLoader()
             knowledge_modules = km_loader.load_for_agent(agent_type)
 
-            # Execute specialist agent with bundle (NO memory adapter!)
+            # Execute specialist agent with substrate adapter + bundle
             result = None
 
             if agent_type == "research":
@@ -853,7 +837,8 @@ Examples:
                     work_ticket_id=work_ticket_id,
                     knowledge_modules=knowledge_modules,
                     session=specialist_session,  # Persistent session from TP!
-                    bundle=bundle  # Pre-loaded context bundle!
+                    substrate=substrate_adapter,  # On-demand substrate queries!
+                    bundle=bundle  # Metadata-only bundle!
                 )
                 # Execute with session resumption
                 result = await agent.deep_dive(
@@ -871,6 +856,7 @@ Examples:
                     work_ticket_id=work_ticket_id,
                     knowledge_modules=knowledge_modules,
                     session=specialist_session,
+                    substrate=substrate_adapter,  # On-demand substrate queries!
                     bundle=bundle
                 )
                 result = await agent.create(
@@ -889,6 +875,7 @@ Examples:
                     work_ticket_id=work_ticket_id,
                     knowledge_modules=knowledge_modules,
                     session=specialist_session,
+                    substrate=substrate_adapter,  # On-demand substrate queries!
                     bundle=bundle
                 )
                 result = await agent.generate(
@@ -914,16 +901,16 @@ Examples:
                 "specialist_session_id": specialist_session.id,
                 "claude_session_id": specialist_session.sdk_session_id,
                 "context_loaded": {
-                    "substrate_blocks": len(substrate_blocks),
+                    "substrate_adapter": True,
                     "reference_assets": len(reference_assets),
                     "agent_config": bool(agent_config)
                 },
-                "message": f"Agent {agent_type} completed with {len(work_outputs)} outputs (staged bundle)"
+                "message": f"Agent {agent_type} completed with {len(work_outputs)} outputs (on-demand substrate)"
             }
 
             logger.info(
                 f"work_orchestration SUCCESS: {agent_type} produced {len(work_outputs)} outputs "
-                f"(bundle={len(substrate_blocks)}+{len(reference_assets)}, "
+                f"(SubstrateQueryAdapter + {len(reference_assets)} assets, "
                 f"session={specialist_session.id}, parent={specialist_session.parent_session_id})"
             )
             return json.dumps(response)

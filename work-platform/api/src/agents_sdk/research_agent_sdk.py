@@ -32,7 +32,7 @@ from uuid import uuid4
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
-from adapters.memory_adapter import SubstrateMemoryAdapter
+from adapters.substrate_adapter import SubstrateQueryAdapter as SubstrateAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
 from agents_sdk.orchestration_patterns import build_agent_system_prompt
 from agents_sdk.work_bundle import WorkBundle
@@ -55,9 +55,9 @@ Keep users informed about their markets, competitors, and topics of interest thr
 - Insight synthesis (so what?)
 
 **How You Access Context (On-Demand Substrate Queries)**:
-- You have access to YARNNN substrate layer via SubstrateMemoryAdapter (memory.query())
+- You have access to YARNNN substrate layer via SubstrateQueryAdapter (substrate.query())
 - Query substrate on-demand for relevant context: prior research, related findings, competitor data
-- The agent orchestrator provides memory adapter - you query what you need when you need it
+- The agent orchestrator provides substrate adapter - you query what you need when you need it
 - This is more efficient than pre-loading all context (lazy loading, token savings)
 
 **CRITICAL: Structured Output Requirements**
@@ -74,7 +74,7 @@ Each output you emit will be reviewed by the user before any action is taken.
 The user maintains full control through this supervision workflow.
 
 **Research Approach:**
-1. Query existing knowledge via memory.query() (avoid redundant research)
+1. Query existing knowledge via substrate.query() (avoid redundant research)
 2. Identify knowledge gaps
 3. Conduct targeted research using WebSearch tool
 4. For each finding: Call emit_work_output with structured data
@@ -106,7 +106,7 @@ class ResearchAgentSDK:
     - ClaudeSDKClient for built-in session management
     - Web search integration via server tools
     - Structured output via emit_work_output tool
-    - Memory access via SubstrateMemoryAdapter
+    - Substrate access via SubstrateQueryAdapter (on-demand queries)
     - Provenance tracking (source blocks)
     """
 
@@ -119,7 +119,7 @@ class ResearchAgentSDK:
         model: str = "claude-sonnet-4-5",
         monitoring_domains: Optional[List[str]] = None,
         session: Optional[AgentSession] = None,
-        memory: Optional[SubstrateMemoryAdapter] = None,
+        substrate: Optional[SubstrateAdapter] = None,
         bundle: Optional[WorkBundle] = None,
     ):
         """
@@ -127,7 +127,7 @@ class ResearchAgentSDK:
 
         Architecture:
         - session: Agent SDK conversation history (SDK layer persistence)
-        - memory: YARNNN substrate access (on-demand queries via memory.query())
+        - substrate: YARNNN substrate access (on-demand queries via substrate.query())
         - bundle: Work ticket metadata + asset references (NOT substrate blocks)
 
         Args:
@@ -138,7 +138,7 @@ class ResearchAgentSDK:
             model: Claude model to use
             monitoring_domains: Domains to monitor (for scheduled runs - Phase 2b)
             session: AgentSession (persistent conversation history - SDK layer)
-            memory: SubstrateMemoryAdapter (on-demand substrate queries - YARNNN layer)
+            substrate: SubstrateQueryAdapter (on-demand substrate queries - YARNNN layer)
             bundle: WorkBundle (work ticket metadata + asset references)
         """
         self.basket_id = basket_id
@@ -156,11 +156,11 @@ class ResearchAgentSDK:
         self.model = model
 
         # YARNNN substrate access (on-demand queries)
-        self.memory = memory
-        if memory:
-            logger.info(f"Using SubstrateMemoryAdapter for on-demand substrate queries")
+        self.substrate = substrate
+        if substrate:
+            logger.info(f"Using SubstrateQueryAdapter for on-demand substrate queries")
         else:
-            logger.warning("No memory adapter - agent cannot query substrate (limited context)")
+            logger.warning("No substrate adapter - agent cannot query substrate (limited context)")
 
         # Work ticket metadata + asset references (NOT substrate blocks)
         self.bundle = bundle
@@ -208,7 +208,7 @@ class ResearchAgentSDK:
         """
         Build STATIC system prompt (cacheable by Claude API).
 
-        Substrate context is queried on-demand via memory.query(), not injected here.
+        Substrate context is queried on-demand via substrate.query(), not injected here.
         This allows prompt caching for efficiency.
         """
         agent_identity = f"""# Research Agent Identity
@@ -245,7 +245,7 @@ You are YARNNN's specialized Research Agent for intelligence gathering and analy
 - Flag uncertainty explicitly (don't guess)
 
 **Contextual Awareness**:
-- Query substrate via memory.query() before starting research
+- Query substrate via substrate.query() before starting research
 - Check what's already known (avoid redundant research)
 - Reference source_block_ids in emit_work_output for provenance
 - Use on-demand queries for efficiency (fetch only relevant context)"""
@@ -288,20 +288,20 @@ You are YARNNN's specialized Research Agent for intelligence gathering and analy
         source_block_ids = []
         context_summary = "No prior context available"
 
-        if self.memory:
+        if self.substrate:
             # On-demand substrate query for relevant prior knowledge
-            memory_results = await self.memory.query(topic, limit=10)
-            context = "\n".join([r.content for r in memory_results])
+            substrate_results = await self.substrate.query(topic, limit=10)
+            context = "\n".join([r.content for r in substrate_results])
             source_block_ids = [
                 str(r.metadata.get("block_id", r.metadata.get("id", "")))
-                for r in memory_results
+                for r in substrate_results
                 if hasattr(r, "metadata") and r.metadata
             ]
             source_block_ids = [bid for bid in source_block_ids if bid]
             context_summary = context if context else "No prior context available"
             logger.info(f"Queried substrate: {len(source_block_ids)} relevant blocks found")
         else:
-            logger.warning("No memory adapter - skipping substrate query (limited context)")
+            logger.warning("No substrate adapter - skipping substrate query (limited context)")
 
         # Build research prompt
         research_prompt = f"""Conduct comprehensive research on: {topic}

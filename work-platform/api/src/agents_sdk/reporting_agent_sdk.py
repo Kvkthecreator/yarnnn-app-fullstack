@@ -35,7 +35,7 @@ from datetime import datetime
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 
-from adapters.memory_adapter import SubstrateMemoryAdapter
+from adapters.substrate_adapter import SubstrateQueryAdapter as SubstrateAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
 from agents_sdk.orchestration_patterns import build_agent_system_prompt
 from agents_sdk.work_bundle import WorkBundle
@@ -58,9 +58,9 @@ Your core capabilities:
 - Create data visualizations and charts
 
 **How You Access Context (On-Demand Substrate Queries)**:
-- You have access to YARNNN substrate layer via SubstrateMemoryAdapter (memory.query())
+- You have access to YARNNN substrate layer via SubstrateQueryAdapter (substrate.query())
 - Query substrate on-demand for relevant context: past reports, templates, data sources
-- The agent orchestrator provides memory adapter - you query what you need when you need it
+- The agent orchestrator provides substrate adapter - you query what you need when you need it
 - This is more efficient than pre-loading all context (lazy loading, token savings)
 
 **CRITICAL: Task Progress Tracking (MANDATORY)**
@@ -197,7 +197,7 @@ class ReportingAgentSDK:
     - Skills integration for file generation (PDF, XLSX, PPTX, DOCX)
     - Code execution for data processing and charts
     - Structured output via emit_work_output tool
-    - Memory access via SubstrateMemoryAdapter
+    - Substrate access via SubstrateQueryAdapter (on-demand queries)
     - Provenance tracking (source blocks)
     """
 
@@ -210,7 +210,7 @@ class ReportingAgentSDK:
         model: str = "claude-sonnet-4-5",
         default_format: str = "pdf",
         session: Optional[AgentSession] = None,
-        memory: Optional[SubstrateMemoryAdapter] = None,
+        substrate: Optional[SubstrateAdapter] = None,
         bundle: Optional[WorkBundle] = None,
     ):
         """
@@ -218,7 +218,7 @@ class ReportingAgentSDK:
 
         Architecture:
         - session: Agent SDK conversation history (SDK layer persistence)
-        - memory: YARNNN substrate access (on-demand queries via memory.query())
+        - substrate: YARNNN substrate access (on-demand queries via substrate.query())
         - bundle: Work ticket metadata + asset references (NOT substrate blocks)
 
         Args:
@@ -229,7 +229,7 @@ class ReportingAgentSDK:
             model: Claude model to use
             default_format: Default output format (pdf, xlsx, pptx, docx, markdown)
             session: AgentSession (persistent conversation history - SDK layer)
-            memory: SubstrateMemoryAdapter (on-demand substrate queries - YARNNN layer)
+            substrate: SubstrateQueryAdapter (on-demand substrate queries - YARNNN layer)
             bundle: WorkBundle (work ticket metadata + asset references)
         """
         self.basket_id = basket_id
@@ -247,11 +247,11 @@ class ReportingAgentSDK:
         self.model = model
 
         # YARNNN substrate access (on-demand queries)
-        self.memory = memory
-        if memory:
-            logger.info(f"Using SubstrateMemoryAdapter for on-demand substrate queries")
+        self.substrate = substrate
+        if substrate:
+            logger.info(f"Using SubstrateQueryAdapter for on-demand substrate queries")
         else:
-            logger.warning("No memory adapter - agent cannot query substrate (limited context)")
+            logger.warning("No substrate adapter - agent cannot query substrate (limited context)")
 
         # Work ticket metadata + asset references (NOT substrate blocks)
         self.bundle = bundle
@@ -302,7 +302,7 @@ class ReportingAgentSDK:
         """
         Build STATIC system prompt (cacheable by Claude API).
 
-        Substrate context is queried on-demand via memory.query(), not injected here.
+        Substrate context is queried on-demand via substrate.query(), not injected here.
         This allows prompt caching for efficiency.
         """
         agent_identity = f"""# Reporting Agent Identity
@@ -344,7 +344,7 @@ You are YARNNN's specialized Reporting Agent for professional report and file ge
 - Visual aids (charts, tables) for clarity
 
 **Contextual Awareness**:
-- Query substrate via memory.query() for past reports, templates, data
+- Query substrate via substrate.query() for past reports, templates, data
 - Reference source_block_ids in emit_work_output for provenance
 - Use on-demand queries for efficiency (fetch only relevant context)"""
 
@@ -394,15 +394,15 @@ You are YARNNN's specialized Reporting Agent for professional report and file ge
         # Query existing knowledge for templates and past reports
         context = None
         source_block_ids = []
-        if self.memory:
-            memory_results = await self.memory.query(
+        if self.substrate:
+            substrate_results = await self.substrate.query(
                 f"report templates for {report_type} in {format} format",
                 limit=5
             )
-            context = "\n".join([r.content for r in memory_results])
+            context = "\n".join([r.content for r in substrate_results])
             source_block_ids = [
                 str(r.metadata.get("block_id", r.metadata.get("id", "")))
-                for r in memory_results
+                for r in substrate_results
                 if hasattr(r, "metadata") and r.metadata
             ]
             source_block_ids = [bid for bid in source_block_ids if bid]
@@ -664,7 +664,7 @@ Please generate a comprehensive {report_type} report in {format} format about {t
         recipe_system_prompt += f"""
 
 **Your Capabilities**:
-- Memory: Available (SubstrateMemoryAdapter) - use memory.query() for on-demand context
+- Substrate: Available (SubstrateQueryAdapter) - use substrate.query() for on-demand context
 - Default Format: {self.default_format}
 - Skills: PDF, XLSX, PPTX, DOCX (file generation)
 - Code Execution: Python (data processing, charts)

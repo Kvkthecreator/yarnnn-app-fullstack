@@ -5,7 +5,7 @@ This is NOT a database model - it's a transient data structure passed to agents.
 
 Architecture (2025-11):
 - WorkBundle = METADATA ONLY (task description, priorities, asset pointers)
-- Substrate = QUERIED ON-DEMAND by agents via SubstrateMemoryAdapter (memory.query())
+- Substrate = QUERIED ON-DEMAND by agents via SubstrateQueryAdapter (substrate.query())
 - This separation provides: token efficiency (lazy loading), agent autonomy, clear concerns
 
 WorkBundle is the "agent-facing work ticket" - a stamp of work details,
@@ -21,8 +21,8 @@ class WorkBundle:
 
     Architecture:
     - WorkBundle contains: task metadata, reference asset pointers, agent config
-    - WorkBundle does NOT contain: substrate blocks (DEPRECATED - agents query on-demand)
-    - Agents access substrate via: SubstrateMemoryAdapter.query() (on-demand, lazy)
+    - WorkBundle does NOT contain substrate blocks (removed - agents query on-demand)
+    - Agents access substrate via: SubstrateQueryAdapter.query() (on-demand, lazy)
 
     This separation enables:
     - Token efficiency (agents query only what they need)
@@ -49,8 +49,6 @@ class WorkBundle:
         # Agent configuration
         agent_config: Optional[Dict[str, Any]] = None,
         user_requirements: Optional[Dict[str, Any]] = None,
-        # DEPRECATED: substrate_blocks - agents should query via memory.query() instead
-        substrate_blocks: Optional[List[Dict[str, Any]]] = None,
     ):
         """
         Initialize work bundle (metadata only).
@@ -67,7 +65,6 @@ class WorkBundle:
             reference_assets: Asset pointers (file IDs, URLs) - NOT full content
             agent_config: Agent configuration from database
             user_requirements: Additional requirements from chat collection
-            substrate_blocks: DEPRECATED - Use memory.query() instead (kept for backward compat)
         """
         self.work_request_id = work_request_id
         self.work_ticket_id = work_ticket_id
@@ -77,7 +74,6 @@ class WorkBundle:
         self.task = task
         self.agent_type = agent_type
         self.priority = priority
-        self.substrate_blocks = substrate_blocks or []
         self.reference_assets = reference_assets or []
         self.agent_config = agent_config or {}
         self.user_requirements = user_requirements or {}
@@ -93,7 +89,6 @@ class WorkBundle:
             "task": self.task,
             "agent_type": self.agent_type,
             "priority": self.priority,
-            "substrate_blocks": self.substrate_blocks,
             "reference_assets": self.reference_assets,
             "agent_config": self.agent_config,
             "user_requirements": self.user_requirements,
@@ -104,7 +99,6 @@ class WorkBundle:
         return f"""Work Bundle Summary:
 - Task: {self.task[:100]}...
 - Agent: {self.agent_type}
-- Substrate Blocks: {len(self.substrate_blocks)}
 - Reference Assets: {len(self.reference_assets)}
 - Config Keys: {list(self.agent_config.keys())}
 """
@@ -121,7 +115,6 @@ class WorkBundle:
             task=data["task"],
             agent_type=data["agent_type"],
             priority=data.get("priority", "medium"),
-            substrate_blocks=data.get("substrate_blocks"),
             reference_assets=data.get("reference_assets"),
             agent_config=data.get("agent_config"),
             user_requirements=data.get("user_requirements"),

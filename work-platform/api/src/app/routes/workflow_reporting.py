@@ -246,15 +246,6 @@ async def execute_reporting_workflow(
                         "started_at": "now()",
                     }).eq("id", work_ticket_id).execute()
 
-                    # Load context
-                    blocks_response = bg_supabase.table("blocks").select(
-                        "id, content, semantic_type, state, created_at, metadata"
-                    ).eq("basket_id", request.basket_id).in_(
-                        "state", ["ACCEPTED", "LOCKED", "CONSTANT"]
-                    ).order("created_at", desc=True).limit(50).execute()
-
-                    substrate_blocks = blocks_response.data or []
-
                     # Load reference assets if provided
                     reference_assets = []
                     if request.reference_asset_ids:
@@ -263,7 +254,7 @@ async def execute_reporting_workflow(
                         ).in_("id", request.reference_asset_ids).execute()
                         reference_assets = assets_response.data or []
 
-                    # Create WorkBundle
+                    # Create WorkBundle (metadata only - NO substrate_blocks)
                     context_bundle = WorkBundle(
                         work_request_id=work_request_id,
                         work_ticket_id=work_ticket_id,
@@ -273,9 +264,17 @@ async def execute_reporting_workflow(
                         task=execution_context["deliverable_intent"].get("purpose") if execution_context else request.task_description,
                         agent_type="reporting",
                         priority=f"p{request.priority}",
-                        substrate_blocks=substrate_blocks,
                         reference_assets=reference_assets,
                         agent_config=execution_context if execution_context else {},
+                    )
+
+                    # Create SubstrateQueryAdapter for on-demand substrate access
+                    from adapters.substrate_adapter import SubstrateQueryAdapter
+                    substrate_adapter = SubstrateQueryAdapter(
+                        basket_id=request.basket_id,
+                        workspace_id=workspace_id,
+                        agent_type="reporting",
+                        work_ticket_id=work_ticket_id,
                     )
 
                     # Execute reporting agent
@@ -284,6 +283,7 @@ async def execute_reporting_workflow(
                         workspace_id=workspace_id,
                         work_ticket_id=work_ticket_id,
                         session=reporting_session,
+                        substrate=substrate_adapter,  # On-demand substrate queries
                         bundle=context_bundle,
                     )
 
@@ -351,15 +351,7 @@ async def execute_reporting_workflow(
                 recipe_used=recipe.slug if recipe else None,
             )
 
-        # Step 6: Load context (WorkBundle pattern)
-        blocks_response = supabase.table("blocks").select(
-            "id, content, semantic_type, state, created_at, metadata"
-        ).eq("basket_id", request.basket_id).in_(
-            "state", ["ACCEPTED", "LOCKED", "CONSTANT"]
-        ).order("created_at", desc=True).limit(50).execute()
-
-        substrate_blocks = blocks_response.data or []
-
+        # Step 6: Create WorkBundle (metadata only) + SubstrateQueryAdapter (on-demand)
         # Load reference assets (user-uploaded) if provided
         reference_assets = []
         if request.reference_asset_ids:
@@ -368,7 +360,7 @@ async def execute_reporting_workflow(
             ).in_("id", request.reference_asset_ids).execute()
             reference_assets = assets_response.data or []
 
-        # Create WorkBundle
+        # Create WorkBundle (metadata only - NO substrate_blocks)
         context_bundle = WorkBundle(
             work_request_id=work_request_id,
             work_ticket_id=work_ticket_id,
@@ -378,14 +370,22 @@ async def execute_reporting_workflow(
             task=execution_context["deliverable_intent"].get("purpose") if execution_context else request.task_description,
             agent_type="reporting",
             priority=f"p{request.priority}",
-            substrate_blocks=substrate_blocks,
             reference_assets=reference_assets,
             agent_config=execution_context if execution_context else {},
         )
 
+        # Create SubstrateQueryAdapter for on-demand substrate access
+        from adapters.substrate_adapter import SubstrateQueryAdapter
+        substrate_adapter = SubstrateQueryAdapter(
+            basket_id=request.basket_id,
+            workspace_id=workspace_id,
+            agent_type="reporting",
+            work_ticket_id=work_ticket_id,
+        )
+
         logger.info(
-            f"[REPORTING WORKFLOW] WorkBundle: {len(substrate_blocks)} blocks, "
-            f"{len(reference_assets)} assets"
+            f"[REPORTING WORKFLOW] Context: {len(reference_assets)} assets, "
+            f"SubstrateQueryAdapter for on-demand queries"
         )
 
         # Step 7: Update work_ticket to running
@@ -400,6 +400,7 @@ async def execute_reporting_workflow(
             workspace_id=workspace_id,
             work_ticket_id=work_ticket_id,
             session=reporting_session,
+            substrate=substrate_adapter,  # On-demand substrate queries
             bundle=context_bundle,
         )
 

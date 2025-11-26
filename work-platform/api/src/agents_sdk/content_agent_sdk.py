@@ -34,7 +34,7 @@ from datetime import datetime
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions, AgentDefinition
 
-from adapters.memory_adapter import SubstrateMemoryAdapter
+from adapters.substrate_adapter import SubstrateQueryAdapter as SubstrateAdapter
 from agents_sdk.shared_tools_mcp import create_shared_tools_server
 from agents_sdk.orchestration_patterns import build_agent_system_prompt, TOOL_CALLING_GUIDANCE
 from agents_sdk.work_bundle import WorkBundle
@@ -58,9 +58,9 @@ Your core capabilities:
 **IMPORTANT**: You create TEXT CONTENT ONLY. You do NOT generate files (PDF, DOCX, PPTX). File generation is handled by the ReportingAgent.
 
 **How You Access Context (On-Demand Substrate Queries)**:
-- You have access to YARNNN substrate layer via SubstrateMemoryAdapter (memory.query())
+- You have access to YARNNN substrate layer via SubstrateQueryAdapter (substrate.query())
 - Query substrate on-demand for relevant context: brand voice examples, past posts, research findings
-- The agent orchestrator provides memory adapter - you query what you need when you need it
+- The agent orchestrator provides substrate adapter - you query what you need when you need it
 - This is more efficient than pre-loading all context (only fetch relevant substrate blocks)
 
 **Platform Delegation via Task Tool**:
@@ -272,7 +272,7 @@ class ContentAgentSDK:
     - ClaudeSDKClient for built-in session management
     - Native subagents for platform specialists (Twitter, LinkedIn, Blog, Instagram)
     - Structured output via emit_work_output tool
-    - Memory access via SubstrateMemoryAdapter
+    - Substrate access via SubstrateQueryAdapter (on-demand queries)
     - Provenance tracking (source blocks)
     """
 
@@ -286,7 +286,7 @@ class ContentAgentSDK:
         enabled_platforms: Optional[List[str]] = None,
         brand_voice_mode: Literal["adaptive", "strict", "creative"] = "adaptive",
         session: Optional['AgentSession'] = None,
-        memory: Optional[SubstrateMemoryAdapter] = None,
+        substrate: Optional[SubstrateAdapter] = None,
         bundle: Optional[WorkBundle] = None,
     ):
         """
@@ -294,7 +294,7 @@ class ContentAgentSDK:
 
         Architecture:
         - session: Agent SDK conversation history (SDK layer persistence)
-        - memory: YARNNN substrate access (on-demand queries via memory.query())
+        - substrate: YARNNN substrate access (on-demand queries via substrate.query())
         - bundle: Work ticket metadata + asset references (NOT substrate blocks)
 
         Args:
@@ -306,7 +306,7 @@ class ContentAgentSDK:
             enabled_platforms: Platforms to support (default: ["twitter", "linkedin", "blog", "instagram"])
             brand_voice_mode: Voice learning approach
             session: AgentSession (persistent conversation history - SDK layer)
-            memory: SubstrateMemoryAdapter (on-demand substrate queries - YARNNN layer)
+            substrate: SubstrateQueryAdapter (on-demand substrate queries - YARNNN layer)
             bundle: WorkBundle (work ticket metadata + asset references)
         """
         self.basket_id = basket_id
@@ -325,11 +325,11 @@ class ContentAgentSDK:
         self.model = model
 
         # YARNNN substrate access (on-demand queries)
-        self.memory = memory
-        if memory:
-            logger.info(f"Using SubstrateMemoryAdapter for on-demand substrate queries")
+        self.substrate = substrate
+        if substrate:
+            logger.info(f"Using SubstrateQueryAdapter for on-demand substrate queries")
         else:
-            logger.warning("No memory adapter - agent cannot query substrate (limited context)")
+            logger.warning("No substrate adapter - agent cannot query substrate (limited context)")
 
         # Work ticket metadata + asset references (NOT substrate blocks)
         self.bundle = bundle
@@ -433,7 +433,7 @@ You are YARNNN's specialized Content Agent for {", ".join(self.enabled_platforms
 - Instagram: Visual-first captions (150-300 words), emoji strategy, 20-30 hashtags
 
 **Contextual Awareness**:
-- Query substrate via memory.query() for relevant context before creating content
+- Query substrate via substrate.query() for relevant context before creating content
 - Always include source_block_ids in emit_work_output for provenance tracking
 - Build on prior work in conversation history
 - Use on-demand queries (efficient, lazy loading) rather than expecting pre-loaded context"""
@@ -488,15 +488,15 @@ You are YARNNN's specialized Content Agent for {", ".join(self.enabled_platforms
         # Query existing knowledge for brand voice examples
         context = None
         source_block_ids = []
-        if self.memory:
-            memory_results = await self.memory.query(
+        if self.substrate:
+            substrate_results = await self.substrate.query(
                 f"brand voice examples for {platform}",
                 limit=5
             )
-            context = "\n".join([r.content for r in memory_results])
+            context = "\n".join([r.content for r in substrate_results])
             source_block_ids = [
                 str(r.metadata.get("block_id", r.metadata.get("id", "")))
-                for r in memory_results
+                for r in substrate_results
                 if hasattr(r, "metadata") and r.metadata
             ]
             source_block_ids = [bid for bid in source_block_ids if bid]
@@ -613,8 +613,8 @@ Please create compelling {content_type} content for {platform} about {topic}."""
         )
 
         # Update agent session with new claude_session_id
-        if new_session_id:
-            self.current_session.update_claude_session(new_session_id)
+        if new_session_id and self.session:
+            self.session.update_claude_session(new_session_id)
             logger.info(f"Stored Claude session: {new_session_id}")
 
         results = {
