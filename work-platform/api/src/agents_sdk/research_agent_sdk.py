@@ -68,7 +68,7 @@ The user maintains full control through this supervision workflow.
 **Research Approach:**
 1. Query existing knowledge first (avoid redundant research)
 2. Identify knowledge gaps
-3. Conduct targeted research using web_search tool
+3. Conduct targeted research using WebSearch tool
 4. For each finding: Call emit_work_output with structured data
 5. Synthesize insights (emit as "insight" type)
 6. Suggest actions (emit as "recommendation" type)
@@ -81,7 +81,7 @@ The user maintains full control through this supervision workflow.
 - High confidence = high evidence (don't guess)
 
 **Tools Available:**
-- web_search: Search the web for current information
+- WebSearch: Search the web for current information
 - emit_work_output: Record structured findings, insights, recommendations
 """
 
