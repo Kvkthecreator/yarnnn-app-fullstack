@@ -188,7 +188,7 @@ async def test_basic_sdk():
 
                 if hasattr(message, 'content') and isinstance(message.content, list):
                     for block in message.content:
-                        if hasattr(block, 'type') and block.type == 'text':
+                        if hasattr(block, 'text'):
                             response_text += block.text
                             print(f"[BASIC SDK TEST] Got text: {block.text[:50]}...", flush=True)
 
@@ -384,7 +384,7 @@ async def test_basic_sdk():
 
                 if hasattr(message, 'content') and isinstance(message.content, list):
                     for block in message.content:
-                        if hasattr(block, 'type') and block.type == 'text':
+                        if hasattr(block, 'text'):
                             response_text += block.text
                             print(f"[BASIC SDK TEST] Got text: {block.text[:50]}...", flush=True)
 

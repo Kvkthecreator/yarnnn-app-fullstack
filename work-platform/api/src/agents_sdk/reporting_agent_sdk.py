@@ -466,7 +466,7 @@ Please generate a comprehensive {report_type} report in {format} format about {t
                             logger.info(f"[REPORTING-GENERATE] Block #{idx}: type={block_type}")
 
                             # Text blocks
-                            if block_type == 'text' and hasattr(block, 'text'):
+                            if hasattr(block, 'text'):
                                 text_length = len(block.text)
                                 text_preview = block.text[:100] if block.text else ""
                                 logger.info(f"[REPORTING-GENERATE] 📝 Text block: {text_length} chars - Preview: {text_preview}...")
@@ -751,7 +751,7 @@ Execute this recipe and emit work_output with validation metadata using the emit
                             logger.info(f"[REPORTING-RECIPE] Block #{idx}: type={block_type}")
 
                             # Text blocks
-                            if block_type == 'text' and hasattr(block, 'text'):
+                            if hasattr(block, 'text'):
                                 text_length = len(block.text)
                                 text_preview = block.text[:100] if block.text else ""
                                 logger.info(f"[REPORTING-RECIPE] 📝 Text block: {text_length} chars - Preview: {text_preview}...")

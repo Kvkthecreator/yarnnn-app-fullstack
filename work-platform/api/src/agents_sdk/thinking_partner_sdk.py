@@ -1138,7 +1138,7 @@ Return JSON format:
                         logger.debug(f"SDK block type: {block_type}")
 
                         # Text blocks
-                        if block_type == 'text' and hasattr(block, 'text'):
+                        if hasattr(block, 'text'):
                             response_text += block.text
 
                         # Tool use blocks - EXECUTE CUSTOM TOOLS

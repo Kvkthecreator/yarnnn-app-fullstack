@@ -368,7 +368,7 @@ Please conduct thorough research and synthesis, emitting structured outputs for 
                             logger.debug(f"SDK block type: {block_type}")
 
                             # Text blocks
-                            if block_type == 'text' and hasattr(block, 'text'):
+                            if hasattr(block, 'text'):
                                 response_text += block.text
 
                             # Tool result blocks (extract work outputs)
