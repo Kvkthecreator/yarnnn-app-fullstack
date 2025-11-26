@@ -15,9 +15,12 @@ RUN apt-get update && apt-get install -y \
 # Verify Node.js and npm installed
 RUN node --version && npm --version
 
-# NOTE: Claude Code CLI is bundled with claude-agent-sdk Python package
-# The Python SDK will manage the CLI installation and lifecycle automatically
-# No need to install it separately via npm
+# Install Claude Code CLI globally
+# The Python SDK (claude-agent-sdk) wraps this CLI, so it must be installed
+RUN npm install -g @anthropic-ai/claude-code
+
+# Verify Claude Code CLI is accessible
+RUN which claude-code && claude-code --version
 
 # Set working directory
 WORKDIR /app
