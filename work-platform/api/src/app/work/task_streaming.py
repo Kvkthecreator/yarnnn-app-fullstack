@@ -78,7 +78,7 @@ async def task_update_generator(
 
         # Check ticket status in database
         try:
-            result = supabase.table("work_tickets").select("status").eq("id", ticket_id).maybeSingle().execute()
+            result = supabase.table("work_tickets").select("status").eq("id", ticket_id).maybe_single().execute()
             if result.data and result.data["status"] in ["completed", "failed"]:
                 yield f"data: {json.dumps({'type': 'completed', 'status': result.data['status']})}\n\n"
                 TASK_UPDATES.pop(ticket_id, None)
@@ -124,7 +124,7 @@ async def stream_task_updates(
     try:
         ticket_result = supabase.table("work_tickets").select(
             "id, workspace_id, basket_id"
-        ).eq("id", ticket_id).maybeSingle().execute()
+        ).eq("id", ticket_id).maybe_single().execute()
 
         if not ticket_result.data:
             raise HTTPException(status_code=404, detail="Work ticket not found")
