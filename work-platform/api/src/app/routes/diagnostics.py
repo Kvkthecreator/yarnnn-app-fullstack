@@ -912,10 +912,15 @@ async def test_inter_agent_flow():
             }
             substrate_blocks.append(block)
 
+        # Use production basket_id for emit_work_output to work
+        # (emit tool needs valid UUID for basket_id)
+        import uuid
+        test_work_ticket_id = str(uuid.uuid4())
+
         bundle = WorkBundle(
             work_request_id="test-request-inter-agent",
-            work_ticket_id="test-ticket-content",
-            basket_id="test-basket-content",
+            work_ticket_id=test_work_ticket_id,
+            basket_id=production_basket_id,  # Use production basket so emit_work_output succeeds
             workspace_id="test-workspace",
             user_id="test-user",
             task="Create Twitter and LinkedIn posts from research findings on Claude Agent SDK and AI development trends",
