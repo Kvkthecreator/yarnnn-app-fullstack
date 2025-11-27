@@ -512,3 +512,175 @@ async def delete_work_output(
     except Exception as e:
         logger.error(f"Failed to delete work output: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete work output")
+
+
+# ============================================================================
+# Promotion Endpoints (Work Output → Substrate)
+# ============================================================================
+
+
+class PromotionUpdate(BaseModel):
+    """Schema for marking a work output as promoted."""
+    proposal_id: str
+    promotion_method: str = Field(..., pattern="^(auto|manual)$")
+    promoted_by: str
+
+
+class SkipPromotionUpdate(BaseModel):
+    """Schema for skipping promotion of a work output."""
+    reason: Optional[str] = None
+    skipped_by: str
+
+
+@router.patch("/{basket_id}/work-outputs/{output_id}/promote")
+async def mark_output_promoted(
+    basket_id: str,
+    output_id: str,
+    promotion: PromotionUpdate,
+    auth_info: dict = Depends(verify_user_or_service),
+):
+    """
+    Mark a work output as promoted to substrate.
+
+    Called after a P1 proposal is created from this output.
+
+    Args:
+        basket_id: Basket ID
+        output_id: Output ID
+        promotion: Promotion details (proposal_id, method, user)
+
+    Returns:
+        Updated work output record
+    """
+    try:
+        # Verify workspace access
+        await verify_workspace_access(basket_id, auth_info)
+
+        # Verify output exists and is approved
+        current = (
+            supabase_admin_client.table("work_outputs")
+            .select("supervision_status, substrate_proposal_id")
+            .eq("id", output_id)
+            .eq("basket_id", basket_id)
+            .single()
+            .execute()
+        )
+
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Work output not found")
+
+        if current.data.get("supervision_status") != "approved":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot promote output with status '{current.data.get('supervision_status')}'. Must be 'approved'."
+            )
+
+        if current.data.get("substrate_proposal_id"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Output already promoted to proposal {current.data.get('substrate_proposal_id')}"
+            )
+
+        # Update with promotion info
+        update_data = {
+            "substrate_proposal_id": promotion.proposal_id,
+            "promotion_method": promotion.promotion_method,
+            "promoted_at": datetime.utcnow().isoformat(),
+            "promoted_by": promotion.promoted_by,
+        }
+
+        result = (
+            supabase_admin_client.table("work_outputs")
+            .update(update_data)
+            .eq("id", output_id)
+            .eq("basket_id", basket_id)
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to mark output as promoted")
+
+        logger.info(
+            f"Marked work output {output_id} as promoted to proposal {promotion.proposal_id}"
+        )
+        return result.data[0]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to mark output as promoted: {e}")
+        raise HTTPException(status_code=500, detail="Failed to mark output as promoted")
+
+
+@router.patch("/{basket_id}/work-outputs/{output_id}/skip-promotion")
+async def mark_output_skipped(
+    basket_id: str,
+    output_id: str,
+    skip_data: SkipPromotionUpdate,
+    auth_info: dict = Depends(verify_user_or_service),
+):
+    """
+    Mark a work output as intentionally not promoted.
+
+    Output remains approved but won't be sent to substrate.
+
+    Args:
+        basket_id: Basket ID
+        output_id: Output ID
+        skip_data: Skip details (reason, user)
+
+    Returns:
+        Updated work output record
+    """
+    try:
+        # Verify workspace access
+        await verify_workspace_access(basket_id, auth_info)
+
+        # Verify output exists
+        current = (
+            supabase_admin_client.table("work_outputs")
+            .select("supervision_status, substrate_proposal_id")
+            .eq("id", output_id)
+            .eq("basket_id", basket_id)
+            .single()
+            .execute()
+        )
+
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Work output not found")
+
+        if current.data.get("substrate_proposal_id"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Output already promoted to proposal {current.data.get('substrate_proposal_id')}"
+            )
+
+        # Update with skip info
+        update_data = {
+            "promotion_method": "skipped",
+            "promoted_at": datetime.utcnow().isoformat(),
+            "promoted_by": skip_data.skipped_by,
+        }
+
+        if skip_data.reason:
+            update_data["reviewer_notes"] = skip_data.reason
+
+        result = (
+            supabase_admin_client.table("work_outputs")
+            .update(update_data)
+            .eq("id", output_id)
+            .eq("basket_id", basket_id)
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to mark output as skipped")
+
+        logger.info(f"Marked work output {output_id} as promotion-skipped")
+        return result.data[0]
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to skip output promotion: {e}")
+        raise HTTPException(status_code=500, detail="Failed to skip output promotion")

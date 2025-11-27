@@ -449,6 +449,7 @@ async def skip_output_promotion(
         bridge = create_bridge(user_id=user_id, user_token=user_token)
         result = await bridge.skip_promotion(
             work_output_id=output_id,
+            basket_id=basket_id,
             reason=request.reason,
         )
 

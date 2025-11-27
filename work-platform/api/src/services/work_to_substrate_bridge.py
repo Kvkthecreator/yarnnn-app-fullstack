@@ -193,9 +193,10 @@ class WorkToSubstrateBridge:
 
             proposal_id = proposal_result.get("id") or proposal_result.get("proposal_id")
 
-            # Mark output as promoted
+            # Mark output as promoted via substrate-API
             await self._mark_output_promoted(
                 work_output_id=work_output_id,
+                basket_id=basket_id,
                 proposal_id=proposal_id,
                 method=promotion_method,
             )
@@ -343,16 +344,24 @@ class WorkToSubstrateBridge:
             logger.error(f"Failed to create substrate proposal: {e}")
             raise
 
-    async def _get_work_output(self, work_output_id: str) -> Optional[Dict[str, Any]]:
-        """Get work output by ID."""
+    async def _get_work_output(self, work_output_id: str, basket_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get work output by ID via substrate-API."""
         try:
-            response = supabase.table("work_outputs").select(
-                "id, basket_id, work_ticket_id, output_type, agent_type, "
-                "title, body, confidence, source_context_ids, "
-                "supervision_status, substrate_proposal_id, promoted_to_block_id"
-            ).eq("id", work_output_id).single().execute()
+            # Need basket_id for substrate-API call
+            # If not provided, we need to look it up first (this is a fallback)
+            if not basket_id:
+                # Try direct DB read as fallback for getting basket_id
+                response = supabase.table("work_outputs").select(
+                    "basket_id"
+                ).eq("id", work_output_id).single().execute()
+                if not response.data:
+                    return None
+                basket_id = response.data.get("basket_id")
 
-            return response.data
+            return self.substrate_client.get_work_output(
+                basket_id=basket_id,
+                output_id=work_output_id,
+            )
         except Exception as e:
             logger.error(f"Failed to get work output: {e}")
             return None
@@ -360,18 +369,19 @@ class WorkToSubstrateBridge:
     async def _mark_output_promoted(
         self,
         work_output_id: str,
+        basket_id: str,
         proposal_id: str,
         method: str,
     ) -> None:
-        """Mark work output as promoted."""
+        """Mark work output as promoted via substrate-API."""
         try:
-            supabase.table("work_outputs").update({
-                "substrate_proposal_id": proposal_id,
-                "promotion_method": method,
-                "promoted_at": datetime.now(timezone.utc).isoformat(),
-                "promoted_by": self.user_id,
-            }).eq("id", work_output_id).execute()
-
+            self.substrate_client.mark_work_output_promoted(
+                basket_id=basket_id,
+                output_id=work_output_id,
+                proposal_id=proposal_id,
+                promotion_method=method,
+                promoted_by=self.user_id,
+            )
         except Exception as e:
             logger.error(f"Failed to mark output as promoted: {e}")
             raise
@@ -387,16 +397,22 @@ class WorkToSubstrateBridge:
             List of work outputs pending promotion
         """
         try:
-            response = supabase.table("work_outputs").select(
-                "id, output_type, title, body, confidence, "
-                "source_context_ids, agent_type, work_ticket_id, created_at"
-            ).eq("basket_id", basket_id).eq(
-                "supervision_status", "approved"
-            ).is_("substrate_proposal_id", "null").is_(
-                "promotion_method", "null"
-            ).order("created_at", desc=False).execute()
+            # Use substrate-API to list approved outputs without promotion
+            result = self.substrate_client.list_work_outputs(
+                basket_id=basket_id,
+                supervision_status="approved",
+                limit=100,
+            )
 
-            return response.data or []
+            outputs = result.get("outputs", [])
+
+            # Filter to only those not yet promoted
+            pending = [
+                o for o in outputs
+                if not o.get("substrate_proposal_id") and not o.get("promotion_method")
+            ]
+
+            return pending
 
         except Exception as e:
             logger.error(f"Failed to get pending promotions: {e}")
@@ -405,6 +421,7 @@ class WorkToSubstrateBridge:
     async def skip_promotion(
         self,
         work_output_id: str,
+        basket_id: str,
         reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -412,18 +429,19 @@ class WorkToSubstrateBridge:
 
         Args:
             work_output_id: Work output ID
+            basket_id: Basket ID
             reason: Optional reason for skipping
 
         Returns:
             Result dict
         """
         try:
-            supabase.table("work_outputs").update({
-                "promotion_method": "skipped",
-                "promoted_at": datetime.now(timezone.utc).isoformat(),
-                "promoted_by": self.user_id,
-                "reviewer_notes": reason,
-            }).eq("id", work_output_id).execute()
+            self.substrate_client.skip_work_output_promotion(
+                basket_id=basket_id,
+                output_id=work_output_id,
+                skipped_by=self.user_id,
+                reason=reason,
+            )
 
             logger.info(f"[BRIDGE] Skipped promotion for: {work_output_id}")
 

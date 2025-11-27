@@ -876,6 +876,72 @@ class SubstrateClient:
             f"/api/baskets/{basket_id}/work-outputs/stats"
         )
 
+    def mark_work_output_promoted(
+        self,
+        basket_id: UUID | str,
+        output_id: UUID | str,
+        proposal_id: str,
+        promotion_method: str,
+        promoted_by: UUID | str,
+    ) -> dict:
+        """
+        Mark a work output as promoted to substrate.
+
+        Called after a P1 proposal is created from this output.
+
+        Args:
+            basket_id: Basket UUID
+            output_id: Output UUID
+            proposal_id: Created proposal ID
+            promotion_method: "auto" or "manual"
+            promoted_by: User ID who triggered promotion
+
+        Returns:
+            Updated work output record
+        """
+        request_body = {
+            "proposal_id": proposal_id,
+            "promotion_method": promotion_method,
+            "promoted_by": str(promoted_by),
+        }
+
+        return self._request(
+            "PATCH",
+            f"/api/baskets/{basket_id}/work-outputs/{output_id}/promote",
+            json=request_body
+        )
+
+    def skip_work_output_promotion(
+        self,
+        basket_id: UUID | str,
+        output_id: UUID | str,
+        skipped_by: UUID | str,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """
+        Mark a work output as intentionally not promoted.
+
+        Args:
+            basket_id: Basket UUID
+            output_id: Output UUID
+            skipped_by: User ID who skipped promotion
+            reason: Optional reason for skipping
+
+        Returns:
+            Updated work output record
+        """
+        request_body = {
+            "skipped_by": str(skipped_by),
+        }
+        if reason:
+            request_body["reason"] = reason
+
+        return self._request(
+            "PATCH",
+            f"/api/baskets/{basket_id}/work-outputs/{output_id}/skip-promotion",
+            json=request_body
+        )
+
     def __enter__(self):
         """Context manager entry."""
         return self
