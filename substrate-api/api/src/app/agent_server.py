@@ -77,6 +77,7 @@ from .api.validator.validate_proposal import router as validator_router
 from .reference_assets import router as reference_assets_router
 from .work_outputs import router as work_outputs_router
 from .routes.substrate_search import router as substrate_search_router
+from .context_templates import router as context_templates_router
 
 
 def _assert_env():
@@ -170,6 +171,7 @@ routers = (
     reference_assets_router,
     work_outputs_router,  # Phase 1 Work Supervision Lifecycle
     substrate_search_router,  # Phase 1 Claude Agent SDK MCP tools
+    context_templates_router,  # Context Templates Architecture
 )
 
 # Add correlation middleware
