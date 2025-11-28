@@ -89,23 +89,6 @@ export default async function DashboardPage() {
     console.error('[Dashboard] Failed to load alerts', error);
   }
 
-  const { count: unassignedCount } = await supabase
-    .from('mcp_unassigned_captures')
-    .select('id', { count: 'exact', head: true })
-    .eq('workspace_id', workspace.id)
-    .eq('status', 'pending');
-
-  const {
-    data: pendingProposals,
-    count: pendingProposalCount,
-  } = await supabase
-    .from('proposals')
-    .select('id, basket_id, proposal_kind, origin, metadata, created_at', { count: 'exact' })
-    .eq('workspace_id', workspace.id)
-    .eq('status', 'PROPOSED')
-    .order('created_at', { ascending: false })
-    .limit(5);
-
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-12 px-6 py-12">
       <PurgeSuccessToast />
@@ -170,24 +153,6 @@ export default async function DashboardPage() {
             No projects yet. Create one to spin up baskets and agents automatically.
           </div>
         )}
-      </section>
-
-      <section>
-        <h2 className="text-sm font-semibold uppercase text-muted-foreground">Change Requests</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <QueueCard
-            title="Workspace Change Requests"
-            description="Basket assignments and cross-basket operations awaiting review."
-            count={unassignedCount ?? 0}
-            href="/workspace/change-requests"
-          />
-          <QueueCard
-            title="Basket-Level Proposals"
-            description="Block updates across every basket (informational)."
-            count={pendingProposalCount ?? 0}
-            href="/baskets"
-          />
-        </div>
       </section>
 
       <section>

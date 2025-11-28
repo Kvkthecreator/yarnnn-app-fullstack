@@ -25,11 +25,6 @@ const GLOBAL_LINKS = [
     icon: LayoutDashboard,
   },
   {
-    href: '/workspace/change-requests',
-    label: 'Change Requests',
-    icon: Inbox,
-  },
-  {
     href: '/projects',
     label: 'Projects',
     icon: BookOpen,

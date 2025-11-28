@@ -144,10 +144,7 @@ function createLink(kind: TimelineEventKind, row: TimelineRow): { href?: string;
       };
     case 'proposal':
     case 'proposal_resolved':
-      if (payload?.proposal_id || row.ref_id) {
-        return { href: `/workspace/change-requests/${payload?.proposal_id || row.ref_id}`, label: 'Review change request' };
-      }
-      return { href: '/workspace/change-requests', label: 'Open change requests' };
+      return {};
     case 'document':
     case 'document_deleted':
       if (payload?.document_id || row.ref_id) {
