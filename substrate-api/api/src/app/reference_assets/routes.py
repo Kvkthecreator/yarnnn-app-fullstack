@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from ..utils.jwt import verify_jwt
@@ -17,8 +17,12 @@ from .schemas import (
     ReferenceAssetListResponse,
     SignedURLResponse,
     AssetTypeResponse,
+    MinimalAssetUploadResponse,
+    ClassificationResultResponse,
 )
 from .services.storage_service import StorageService
+from .services.classification_service import classification_service
+from services.events import EventService
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +239,264 @@ async def upload_reference_asset(
     except Exception as e:
         logger.error(f"Failed to upload reference asset: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to upload asset: {str(e)}")
+
+
+# ============================================================================
+# Minimal Upload with Auto-Classification
+# ============================================================================
+
+
+async def _classify_and_update_asset(
+    asset_id: str,
+    basket_id: str,
+    workspace_id: str,
+    file_name: str,
+    mime_type: str,
+    file_size_bytes: int,
+    text_preview: Optional[str],
+):
+    """
+    Background task: Classify asset using LLM and update record.
+    Emits app_event when classification completes.
+    """
+    try:
+        # Mark as classifying
+        supabase_admin_client.table("reference_assets").update({
+            "classification_status": "classifying",
+        }).eq("id", asset_id).execute()
+
+        # Get available asset types from catalog
+        types_result = (
+            supabase_admin_client.table("asset_type_catalog")
+            .select("asset_type")
+            .eq("is_active", True)
+            .neq("asset_type", "pending_classification")  # Exclude system type
+            .execute()
+        )
+        available_types = [t["asset_type"] for t in types_result.data] if types_result.data else None
+
+        # Run classification
+        result = await classification_service.classify_asset(
+            file_name=file_name,
+            mime_type=mime_type,
+            file_size_bytes=file_size_bytes,
+            text_preview=text_preview,
+            available_types=available_types,
+        )
+
+        # Get category for classified type
+        asset_type = result["asset_type"]
+        category_result = (
+            supabase_admin_client.table("asset_type_catalog")
+            .select("category")
+            .eq("asset_type", asset_type)
+            .single()
+            .execute()
+        )
+        asset_category = category_result.data["category"] if category_result.data else "uncategorized"
+
+        # Update asset record
+        update_data = {
+            "asset_type": asset_type,
+            "asset_category": asset_category,
+            "description": result.get("description"),
+            "classification_status": "classified" if result["success"] else "failed",
+            "classification_confidence": result.get("confidence"),
+            "classified_at": datetime.utcnow().isoformat(),
+            "classification_metadata": {
+                "reasoning": result.get("reasoning"),
+                "success": result["success"],
+            },
+        }
+
+        supabase_admin_client.table("reference_assets").update(update_data).eq("id", asset_id).execute()
+
+        logger.info(f"[ASSET CLASSIFY] Asset {asset_id} classified as {asset_type} (confidence: {result.get('confidence', 0):.2f})")
+
+        # Emit app_event for realtime notification
+        EventService.emit_job_succeeded(
+            workspace_id=workspace_id,
+            job_id=asset_id,
+            job_name="asset.classify",
+            message=f"Asset classified as {asset_type}",
+            basket_id=basket_id,
+            payload={
+                "asset_id": asset_id,
+                "asset_type": asset_type,
+                "confidence": result.get("confidence"),
+                "description": result.get("description"),
+            }
+        )
+
+    except Exception as e:
+        logger.exception(f"[ASSET CLASSIFY] Failed to classify asset {asset_id}: {e}")
+
+        # Mark as failed
+        try:
+            supabase_admin_client.table("reference_assets").update({
+                "classification_status": "failed",
+                "classification_metadata": {"error": str(e)},
+            }).eq("id", asset_id).execute()
+        except Exception:
+            pass
+
+        # Emit failure event
+        try:
+            EventService.emit_job_failed(
+                workspace_id=workspace_id,
+                job_id=asset_id,
+                job_name="asset.classify",
+                message="Asset classification failed",
+                basket_id=basket_id,
+                error=str(e),
+            )
+        except Exception:
+            pass
+
+
+@router.post("/{basket_id}/assets/upload", response_model=MinimalAssetUploadResponse)
+async def upload_asset_minimal(
+    basket_id: UUID,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    user: dict = Depends(verify_jwt),
+):
+    """
+    Minimal asset upload with automatic LLM classification.
+
+    This is the recommended upload flow:
+    1. Upload file with minimal metadata (just file + basket)
+    2. Asset created with pending_classification type
+    3. LLM classification runs in background
+    4. User notified via app_events when classification completes
+    5. User can override classification if needed
+
+    Args:
+        basket_id: Target basket UUID
+        file: File to upload (multipart/form-data)
+
+    Returns:
+        Asset ID and initial status (classification pending)
+    """
+    try:
+        # Verify workspace access
+        workspace_id = await verify_workspace_access(basket_id, user)
+
+        # Read file content
+        file_content = await file.read()
+        file_size = len(file_content)
+
+        # Check file size (50MB limit)
+        if file_size > 52428800:
+            raise HTTPException(status_code=413, detail="File size exceeds 50MB limit")
+
+        # Upload to storage
+        storage_path, asset_id = await StorageService.upload_file(
+            basket_id=basket_id,
+            filename=file.filename,
+            file_content=file_content,
+            mime_type=file.content_type,
+        )
+
+        user_id = user.get("user_id") or user.get("sub")
+
+        # Create asset with pending_classification type
+        asset_data = {
+            "id": str(asset_id),
+            "basket_id": str(basket_id),
+            "storage_path": storage_path,
+            "file_name": file.filename,
+            "file_size_bytes": file_size,
+            "mime_type": file.content_type,
+            "asset_type": "pending_classification",
+            "asset_category": "system",
+            "permanence": "permanent",
+            "created_by_user_id": user_id,
+            "access_count": 0,
+            "classification_status": "unclassified",
+            "metadata": {},
+        }
+
+        result = supabase_admin_client.table("reference_assets").insert(asset_data).execute()
+
+        if not result.data:
+            await StorageService.delete_file(storage_path)
+            raise HTTPException(status_code=500, detail="Failed to create asset metadata")
+
+        # Extract text preview for classification context (for text files)
+        text_preview = classification_service.get_text_preview(file_content, file.content_type)
+
+        # Schedule background classification
+        background_tasks.add_task(
+            _classify_and_update_asset,
+            asset_id=str(asset_id),
+            basket_id=str(basket_id),
+            workspace_id=workspace_id,
+            file_name=file.filename,
+            mime_type=file.content_type,
+            file_size_bytes=file_size,
+            text_preview=text_preview,
+        )
+
+        logger.info(f"[ASSET UPLOAD] Asset {asset_id} uploaded, classification scheduled")
+
+        return MinimalAssetUploadResponse(
+            id=asset_id,
+            basket_id=basket_id,
+            file_name=file.filename,
+            mime_type=file.content_type,
+            file_size_bytes=file_size,
+            classification_status="unclassified",
+            message="Asset uploaded. Classification in progress - you'll be notified when complete.",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to upload asset: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload asset: {str(e)}")
+
+
+@router.get("/{basket_id}/assets/{asset_id}/classification", response_model=ClassificationResultResponse)
+async def get_asset_classification(
+    basket_id: UUID,
+    asset_id: UUID,
+):
+    """
+    Get classification status and result for an asset.
+
+    Use this to poll classification status or get classification details.
+    Prefer subscribing to app_events for realtime notifications.
+    """
+    try:
+        result = (
+            supabase_admin_client.table("reference_assets")
+            .select("id, asset_type, asset_category, description, classification_status, classification_confidence, classification_metadata")
+            .eq("id", str(asset_id))
+            .eq("basket_id", str(basket_id))
+            .single()
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+        data = result.data
+        return ClassificationResultResponse(
+            asset_id=data["id"],
+            asset_type=data["asset_type"],
+            asset_category=data["asset_category"],
+            description=data.get("description"),
+            classification_confidence=data.get("classification_confidence"),
+            classification_status=data.get("classification_status", "unclassified"),
+            reasoning=data.get("classification_metadata", {}).get("reasoning"),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get classification status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get classification status")
 
 
 @router.get("/{basket_id}/assets", response_model=ReferenceAssetListResponse)

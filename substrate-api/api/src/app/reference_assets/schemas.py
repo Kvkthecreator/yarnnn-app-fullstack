@@ -69,3 +69,27 @@ class AssetTypeResponse(BaseModel):
     category: Optional[str]
     allowed_mime_types: Optional[List[str]]
     is_active: bool
+
+
+class MinimalAssetUploadResponse(BaseModel):
+    """Response model for minimal asset upload (pending classification)."""
+
+    id: UUID
+    basket_id: UUID
+    file_name: str
+    mime_type: Optional[str]
+    file_size_bytes: Optional[int]
+    classification_status: str  # "unclassified" initially
+    message: str
+
+
+class ClassificationResultResponse(BaseModel):
+    """Response model for classification result."""
+
+    asset_id: UUID
+    asset_type: str
+    asset_category: str
+    description: Optional[str]
+    classification_confidence: Optional[float]
+    classification_status: str
+    reasoning: Optional[str]

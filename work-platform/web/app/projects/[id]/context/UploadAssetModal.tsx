@@ -3,8 +3,6 @@
 import { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
-import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -12,59 +10,32 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Upload, X, Loader2 } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Upload, Loader2, Sparkles, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
-
-interface AssetType {
-  asset_type: string;
-  display_name: string;
-  category: string;
-  allowed_mime_types: string[];
-}
 
 interface UploadAssetModalProps {
   open: boolean;
   onClose: () => void;
   basketId: string;
-  assetTypes: AssetType[];
   onUploadSuccess: () => void;
 }
-
-const AGENT_TYPES = [
-  { value: "research", label: "Research Agent" },
-  { value: "content", label: "Content Agent" },
-  { value: "reporting", label: "Reporting Agent" },
-];
 
 export default function UploadAssetModal({
   open,
   onClose,
   basketId,
-  assetTypes,
   onUploadSuccess,
 }: UploadAssetModalProps) {
   const [uploading, setUploading] = useState(false);
-  const [selectedAssetType, setSelectedAssetType] = useState<string>(
-    assetTypes.length > 0 ? assetTypes[0].asset_type : ""
-  );
-  const [selectedAgentScope, setSelectedAgentScope] = useState<string[]>([]);
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadComplete, setUploadComplete] = useState(false);
 
   // Dropzone configuration
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: (acceptedFiles) => {
       if (acceptedFiles.length > 0) {
         setSelectedFile(acceptedFiles[0]);
+        setUploadComplete(false);
       }
     },
     multiple: false,
@@ -78,14 +49,10 @@ export default function UploadAssetModal({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // Handle upload
+  // Handle minimal upload with auto-classification
   const handleUpload = async () => {
     if (!selectedFile) {
       toast.error("Please select a file");
-      return;
-    }
-    if (!selectedAssetType) {
-      toast.error("Please select an asset type");
       return;
     }
 
@@ -93,17 +60,9 @@ export default function UploadAssetModal({
       setUploading(true);
       const formData = new FormData();
       formData.append("file", selectedFile);
-      formData.append("asset_type", selectedAssetType);
-      if (description) formData.append("description", description);
-      if (selectedAgentScope.length > 0) {
-        formData.append("agent_scope", selectedAgentScope.join(","));
-      }
-      if (tags.length > 0) {
-        formData.append("tags", tags.join(","));
-      }
-      formData.append("permanence", "permanent");
 
-      const response = await fetch(`/api/baskets/${basketId}/assets`, {
+      // Use the new minimal upload endpoint
+      const response = await fetch(`/api/baskets/${basketId}/assets/upload`, {
         method: "POST",
         body: formData,
       });
@@ -113,16 +72,27 @@ export default function UploadAssetModal({
         throw new Error(errorData.detail || "Upload failed");
       }
 
-      toast.success("Asset uploaded successfully");
+      const result = await response.json();
 
-      // Reset form and close modal
-      resetForm();
-      onUploadSuccess();
-      onClose();
+      setUploadComplete(true);
+      toast.success(
+        "Asset uploaded! Classification in progress...",
+        {
+          description: "You'll be notified when classification completes.",
+          duration: 4000,
+        }
+      );
+
+      // Brief delay to show success state, then close
+      setTimeout(() => {
+        resetForm();
+        onUploadSuccess();
+        onClose();
+      }, 1500);
+
     } catch (err) {
       console.error("[Assets] Upload error:", err);
       toast.error(err instanceof Error ? err.message : "Failed to upload asset");
-    } finally {
       setUploading(false);
     }
   };
@@ -130,27 +100,8 @@ export default function UploadAssetModal({
   // Reset form
   const resetForm = () => {
     setSelectedFile(null);
-    setDescription("");
-    setTags([]);
-    setSelectedAgentScope([]);
-    setTagInput("");
-  };
-
-  // Add tag
-  const handleAddTag = () => {
-    if (tagInput.trim() && !tags.includes(tagInput.trim())) {
-      setTags([...tags, tagInput.trim()]);
-      setTagInput("");
-    }
-  };
-
-  // Toggle agent scope
-  const toggleAgentScope = (agentType: string) => {
-    setSelectedAgentScope((prev) =>
-      prev.includes(agentType)
-        ? prev.filter((a) => a !== agentType)
-        : [...prev, agentType]
-    );
+    setUploading(false);
+    setUploadComplete(false);
   };
 
   const handleClose = () => {
@@ -162,29 +113,39 @@ export default function UploadAssetModal({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) handleClose(); }}>
-      <DialogContent className="max-w-lg w-full max-h-[85vh] flex flex-col p-0">
+      <DialogContent className="max-w-md w-full p-0">
         <DialogHeader className="p-4 border-b border-surface-primary-border">
           <DialogTitle className="text-lg font-medium text-foreground">
             Upload Asset
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="p-4 space-y-4">
           {/* File Drop Zone */}
           <div
             {...getRootProps()}
             className={cn(
-              "border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors",
+              "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors",
               isDragActive
                 ? "border-primary bg-primary/5"
                 : "border-muted-foreground/20 hover:border-primary/50",
-              selectedFile && "border-primary bg-primary/5"
+              selectedFile && "border-primary bg-primary/5",
+              uploadComplete && "border-green-500 bg-green-500/5"
             )}
           >
-            <input {...getInputProps()} />
-            <Upload className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
-            {selectedFile ? (
+            <input {...getInputProps()} disabled={uploading || uploadComplete} />
+
+            {uploadComplete ? (
               <div>
+                <CheckCircle className="h-8 w-8 mx-auto mb-3 text-green-500" />
+                <p className="text-sm font-medium text-foreground">Upload complete!</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  AI is classifying your asset...
+                </p>
+              </div>
+            ) : selectedFile ? (
+              <div>
+                <Upload className="h-8 w-8 mx-auto mb-3 text-primary" />
                 <p className="text-sm font-medium text-foreground">{selectedFile.name}</p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {formatFileSize(selectedFile.size)}
@@ -192,6 +153,7 @@ export default function UploadAssetModal({
               </div>
             ) : (
               <div>
+                <Upload className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
                 <p className="text-sm text-foreground">
                   {isDragActive ? "Drop file here" : "Drag and drop a file, or click to select"}
                 </p>
@@ -200,86 +162,16 @@ export default function UploadAssetModal({
             )}
           </div>
 
-          {/* Asset Type Selector */}
-          <div>
-            <label className="text-sm font-medium text-foreground mb-2 block">Asset Type</label>
-            <Select value={selectedAssetType} onValueChange={setSelectedAssetType}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select asset type" />
-              </SelectTrigger>
-              <SelectContent>
-                {assetTypes.map((type) => (
-                  <SelectItem key={type.asset_type} value={type.asset_type}>
-                    {type.display_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Agent Scope Selector */}
-          <div>
-            <label className="text-sm font-medium text-foreground mb-2 block">
-              Agent Scope (optional)
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {AGENT_TYPES.map((agent) => (
-                <Badge
-                  key={agent.value}
-                  variant={selectedAgentScope.includes(agent.value) ? "default" : "outline"}
-                  className="cursor-pointer"
-                  onClick={() => toggleAgentScope(agent.value)}
-                >
-                  {agent.label}
-                </Badge>
-              ))}
+          {/* Auto-classification info */}
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+            <Sparkles className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+            <div className="text-xs text-muted-foreground">
+              <p className="font-medium text-foreground mb-1">AI-Powered Classification</p>
+              <p>
+                Your asset will be automatically classified and described.
+                You can adjust the classification later if needed.
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Leave empty to make asset available to all agents
-            </p>
-          </div>
-
-          {/* Description */}
-          <div>
-            <label className="text-sm font-medium text-foreground mb-2 block">
-              Description (optional)
-            </label>
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe this asset..."
-            />
-          </div>
-
-          {/* Tags */}
-          <div>
-            <label className="text-sm font-medium text-foreground mb-2 block">
-              Tags (optional)
-            </label>
-            <div className="flex gap-2 mb-2">
-              <Input
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && (e.preventDefault(), handleAddTag())}
-                placeholder="Add tag..."
-              />
-              <Button onClick={handleAddTag} variant="outline" size="sm">
-                Add
-              </Button>
-            </div>
-            {tags.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {tags.map((tag) => (
-                  <Badge key={tag} variant="secondary" className="flex items-center gap-1">
-                    {tag}
-                    <X
-                      className="h-3 w-3 cursor-pointer"
-                      onClick={() => setTags(tags.filter((t) => t !== tag))}
-                    />
-                  </Badge>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
@@ -290,13 +182,18 @@ export default function UploadAssetModal({
           </Button>
           <Button
             onClick={handleUpload}
-            disabled={!selectedFile || uploading}
+            disabled={!selectedFile || uploading || uploadComplete}
             size="sm"
           >
             {uploading ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                 Uploading...
+              </>
+            ) : uploadComplete ? (
+              <>
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Done
               </>
             ) : (
               <>

@@ -15,6 +15,7 @@ import {
   Search,
   FileText,
   Image as ImageIcon,
+  Sparkles,
 } from "lucide-react";
 import {
   Select,
@@ -38,6 +39,8 @@ interface ReferenceAsset {
   tags: string[];
   created_at: string;
   storage_path: string;
+  classification_status?: string;
+  classification_confidence?: number;
 }
 
 interface AssetType {
@@ -303,10 +306,28 @@ export default function ContextAssetsClient({ projectId, basketId }: ContextAsse
               )}
 
               <div className="flex flex-wrap gap-1 mb-2">
-                <Badge variant="secondary" className="text-xs">
-                  {assetTypes.find((t) => t.asset_type === asset.asset_type)?.display_name ||
-                    asset.asset_type}
-                </Badge>
+                {/* Classification status indicator */}
+                {asset.classification_status === "classifying" && (
+                  <Badge variant="outline" className="text-xs gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Classifying...
+                  </Badge>
+                )}
+                {asset.classification_status === "classified" && asset.asset_type !== "pending_classification" && (
+                  <Badge variant="secondary" className="text-xs gap-1">
+                    {asset.classification_confidence && asset.classification_confidence >= 0.8 ? (
+                      <Sparkles className="h-3 w-3" />
+                    ) : null}
+                    {assetTypes.find((t) => t.asset_type === asset.asset_type)?.display_name ||
+                      asset.asset_type}
+                  </Badge>
+                )}
+                {(!asset.classification_status || asset.classification_status === "unclassified") && (
+                  <Badge variant="secondary" className="text-xs">
+                    {assetTypes.find((t) => t.asset_type === asset.asset_type)?.display_name ||
+                      asset.asset_type}
+                  </Badge>
+                )}
                 {asset.agent_scope && asset.agent_scope.length > 0 && (
                   <>
                     {asset.agent_scope.map((agent) => (
@@ -337,7 +358,6 @@ export default function ContextAssetsClient({ projectId, basketId }: ContextAsse
         open={uploadModalOpen}
         onClose={() => setUploadModalOpen(false)}
         basketId={basketId}
-        assetTypes={assetTypes}
         onUploadSuccess={fetchAssets}
       />
     </div>
