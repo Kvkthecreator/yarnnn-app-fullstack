@@ -29,6 +29,7 @@ pre-commit
 
 # ── LLM integrations (using PyPI versions for stability) ──────────────
 openai>=1.66.5
+anthropic>=0.40.0  # Required for Claude Files API download in work_outputs
 
 # ── Documentation tooling ─────────────────────────────────────────────  
 griffe>=1.5.6,<2
