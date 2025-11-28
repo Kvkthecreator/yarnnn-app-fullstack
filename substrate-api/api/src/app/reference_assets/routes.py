@@ -89,11 +89,11 @@ async def get_asset_type_category(asset_type: str) -> str:
 @router.get("/{basket_id}/asset-types", response_model=List[AssetTypeResponse])
 async def list_asset_types(
     basket_id: UUID,
-    user: dict = Depends(verify_jwt),
 ):
     """List all active asset types from catalog.
 
     No workspace check needed - catalog is global.
+    Auth handled by middleware exemption (/api/substrate prefix).
     """
     try:
         result = (

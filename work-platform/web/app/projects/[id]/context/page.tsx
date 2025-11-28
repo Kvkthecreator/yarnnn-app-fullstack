@@ -15,9 +15,10 @@ import { createServerComponentClient } from "@/lib/supabase/clients";
 import { getAuthenticatedUser } from "@/lib/auth/getAuthenticatedUser";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
-import { ArrowLeft, Brain } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import ContextPageClient from "./ContextPageClient";
 import AddContextButton from "./AddContextButton";
+import ContextInfoPopover from "./ContextInfoPopover";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -82,7 +83,10 @@ export default async function ProjectContextPage({ params }: PageProps) {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back to Project
           </Link>
-          <h1 className="text-3xl font-bold text-foreground">Context</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-3xl font-bold text-foreground">Context</h1>
+            <ContextInfoPopover />
+          </div>
           <p className="text-muted-foreground mt-1">{project.name}</p>
         </div>
         <AddContextButton projectId={projectId} basketId={project.basket_id} />
@@ -90,24 +94,6 @@ export default async function ProjectContextPage({ params }: PageProps) {
 
       {/* Context Blocks Client Component */}
       <ContextPageClient projectId={projectId} basketId={project.basket_id} />
-
-      {/* Info Card */}
-      <div className="rounded-2xl border border-surface-primary-border bg-surface-primary p-4">
-        <div className="flex gap-3">
-          <div className="flex-shrink-0 text-primary">
-            <Brain className="h-5 w-5" />
-          </div>
-          <div className="flex-1">
-            <h3 className="text-sm font-medium text-foreground">
-              How Agents Use Context
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              When executing work, agents query these blocks to understand your project's knowledge and meaning.
-              Richer context leads to higher quality work outputs. Context is the foundation of agent intelligence.
-            </p>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
