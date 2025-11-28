@@ -7,19 +7,19 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { cn } from '@/lib/utils';
 import {
-  AlertCircle,
-  CheckCircle2,
   ChevronRight,
-  Loader2,
-  Building2,
+  Anchor,
+  Sparkles,
 } from 'lucide-react';
+import type { AnchorStatusSummary } from '@/lib/anchors/types';
 
-interface TemplateStatus {
+// Core anchors that every project should have
+const CORE_ANCHOR_ROLES = ['problem', 'customer', 'vision'];
+
+interface AnchorStatus {
   total: number;
-  filled: number;
-  required_total: number;
-  required_filled: number;
-  is_complete: boolean;
+  approved: number;
+  missing_core: string[];
 }
 
 interface SetupContextBannerProps {
@@ -32,22 +32,34 @@ export default function SetupContextBanner({
   basketId,
 }: SetupContextBannerProps) {
   const router = useRouter();
-  const [status, setStatus] = useState<TemplateStatus | null>(null);
+  const [status, setStatus] = useState<AnchorStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    fetchTemplateStatus();
+    fetchAnchorStatus();
   }, [projectId]);
 
-  const fetchTemplateStatus = async () => {
+  const fetchAnchorStatus = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/projects/${projectId}/context/templates`);
+      const response = await fetch(`/api/projects/${projectId}/context/anchors`);
 
       if (response.ok) {
         const data = await response.json();
-        setStatus(data.status || null);
+        const anchors: AnchorStatusSummary[] = data.anchors || [];
+
+        // Calculate status
+        const approvedAnchors = anchors.filter(a => a.lifecycle === 'approved');
+        const missingCore = CORE_ANCHOR_ROLES.filter(
+          role => !anchors.some(a => a.anchor_key === role && a.lifecycle === 'approved')
+        );
+
+        setStatus({
+          total: anchors.length,
+          approved: approvedAnchors.length,
+          missing_core: missingCore,
+        });
         setError(false);
       } else {
         setError(true);
@@ -66,17 +78,15 @@ export default function SetupContextBanner({
   }
 
   if (error || !status) {
-    return null; // Don't block the page if templates API fails
+    return null; // Don't block the page if anchors API fails
   }
 
-  // If all required templates are filled, show a subtle completed state or nothing
-  if (status.is_complete) {
-    // Optional: Show a subtle "complete" state
-    // For now, just don't show the banner when complete
+  // If all core anchors are present, don't show banner
+  if (status.missing_core.length === 0) {
     return null;
   }
 
-  const pendingRequired = status.required_total - status.required_filled;
+  const missingCount = status.missing_core.length;
 
   return (
     <Card
@@ -88,7 +98,7 @@ export default function SetupContextBanner({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-surface-warning text-warning-foreground flex-shrink-0">
-            <Building2 className="h-6 w-6" />
+            <Anchor className="h-6 w-6" />
           </div>
           <div className="space-y-1">
             <div className="flex items-center gap-2">
@@ -99,12 +109,14 @@ export default function SetupContextBanner({
                 variant="outline"
                 className="bg-surface-warning/50 text-warning-foreground border-surface-warning-border"
               >
-                {status.required_filled}/{status.required_total} required
+                {CORE_ANCHOR_ROLES.length - missingCount}/{CORE_ANCHOR_ROLES.length} anchors
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              Complete {pendingRequired} more required template{pendingRequired !== 1 ? 's' : ''} to help agents understand your project better.
-              This improves accuracy and relevance of agent outputs.
+              {status.total === 0
+                ? "Describe your project to automatically generate foundational context anchors."
+                : `Add ${missingCount} more anchor${missingCount !== 1 ? 's' : ''} (${status.missing_core.join(', ')}) to help agents understand your project better.`
+              }
             </p>
           </div>
         </div>
@@ -113,7 +125,8 @@ export default function SetupContextBanner({
           onClick={() => router.push(`/projects/${projectId}/context`)}
           className="gap-2 flex-shrink-0"
         >
-          Set Up Context
+          <Sparkles className="h-4 w-4" />
+          Set Up Anchors
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

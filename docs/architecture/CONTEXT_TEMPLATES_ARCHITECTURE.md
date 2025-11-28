@@ -1,8 +1,15 @@
 # Context Templates Architecture
 
+> **⚠️ DEPRECATED**: This document has been superseded by [ANCHOR_SEEDING_ARCHITECTURE.md](./ANCHOR_SEEDING_ARCHITECTURE.md).
+>
+> **Decision Date**: 2025-11-28
+> **Reason**: Context Templates (fixed schemas) are being replaced by Anchor Seeding (LLM-generated blocks with anchor roles). The existing `anchor_role` infrastructure provides more flexibility and better LLM compatibility.
+>
+> **Migration**: See ANCHOR_SEEDING_ARCHITECTURE.md for cleanup and implementation plan.
+
 **Version**: 1.1
 **Date**: 2025-11-28
-**Status**: Design Complete, Implementation Ready
+**Status**: ~~Design Complete, Implementation Ready~~ **DEPRECATED**
 **Category**: Substrate Architecture Enhancement
 
 ---

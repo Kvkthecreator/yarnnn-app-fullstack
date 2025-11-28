@@ -15,8 +15,7 @@ import {
 } from "lucide-react";
 import { ProjectHealthCheck } from "@/components/projects/ProjectHealthCheck";
 import BlockDetailModal from "@/components/context/BlockDetailModal";
-import CoreContextSection from "@/components/context/CoreContextSection";
-import TemplateFormModal from "@/components/context/TemplateFormModal";
+import AnchorStatusSection from "@/components/context/AnchorStatusSection";
 
 interface Block {
   id: string;
@@ -36,22 +35,6 @@ interface ContextBlocksClientProps {
   onAddContextClick?: () => void;
 }
 
-// Template type for CoreContextSection
-interface Template {
-  id: string;
-  slug: string;
-  name: string;
-  description: string | null;
-  category: string;
-  schema: any;
-  is_required: boolean;
-  display_order: number;
-  icon: string | null;
-  is_filled: boolean;
-  block_id: string | null;
-  filled_at: string | null;
-}
-
 export default function ContextBlocksClient({ projectId, basketId, onAddContextClick }: ContextBlocksClientProps) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,10 +45,8 @@ export default function ContextBlocksClient({ projectId, basketId, onAddContextC
   const [pollingMessage, setPollingMessage] = useState<string | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
 
-  // Template state
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [templateModalOpen, setTemplateModalOpen] = useState(false);
-  const [coreContextKey, setCoreContextKey] = useState(0); // For refreshing CoreContextSection
+  // Anchor section refresh key
+  const [anchorSectionKey, setAnchorSectionKey] = useState(0);
 
   // Fetch blocks from BFF
   const fetchBlocks = async () => {
@@ -218,39 +199,22 @@ export default function ContextBlocksClient({ projectId, basketId, onAddContextC
     info: 'border-surface-primary-border bg-surface-primary text-foreground',
   };
 
-  // Template handlers
-  const handleTemplateClick = (template: Template) => {
-    setSelectedTemplate(template);
-    setTemplateModalOpen(true);
-  };
-
-  const handleTemplateSuccess = () => {
-    // Refresh CoreContextSection by changing key
-    setCoreContextKey((prev) => prev + 1);
-    // Also refresh blocks in case a template block was added
+  // Handler for anchor seeding success
+  const handleAnchorSeedSuccess = () => {
+    // Refresh anchor section
+    setAnchorSectionKey((prev) => prev + 1);
+    // Also refresh blocks to show new anchor blocks
     fetchBlocks();
   };
 
   return (
     <div className="space-y-6">
-      {/* Core Context Section - Pinned at top */}
-      <CoreContextSection
-        key={coreContextKey}
+      {/* Anchor Status Section - Shows foundational anchors */}
+      <AnchorStatusSection
+        key={anchorSectionKey}
         projectId={projectId}
         basketId={basketId}
-        onTemplateClick={handleTemplateClick}
-      />
-
-      {/* Template Form Modal */}
-      <TemplateFormModal
-        template={selectedTemplate}
-        projectId={projectId}
-        open={templateModalOpen}
-        onClose={() => {
-          setTemplateModalOpen(false);
-          setSelectedTemplate(null);
-        }}
-        onSuccess={handleTemplateSuccess}
+        onSeedSuccess={handleAnchorSeedSuccess}
       />
 
       {/* Project Health Check */}
