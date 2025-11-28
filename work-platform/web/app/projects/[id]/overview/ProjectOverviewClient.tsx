@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Plus, Zap, CheckCircle2, FileCheck, Clock, Eye } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
+import SetupContextBanner from '@/components/context/SetupContextBanner';
 
 interface ProjectAgent {
   id: string;
@@ -93,6 +94,12 @@ export function ProjectOverviewClient({ project }: ProjectOverviewClientProps) {
         </div>
 
       </div>
+
+      {/* Setup Context Banner - shown when foundational context is incomplete */}
+      <SetupContextBanner
+        projectId={project.id}
+        basketId={project.basket_id}
+      />
 
       {/* Project Agents */}
       {project.agents && project.agents.length > 0 && (

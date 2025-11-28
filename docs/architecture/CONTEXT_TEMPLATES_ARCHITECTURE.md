@@ -636,12 +636,52 @@ Total context: ~14K tokens (36% reduction)
 3. **Enhance recipe execution** to check template status
 4. **Test**: Verify agents receive structured foundational context
 
-### Phase 3: Frontend (Following)
+### Phase 3: Frontend (Implemented 2025-11-28)
 
-1. **Context Page Enhancement**: Display templates with fill status
-2. **Recipe Selection UI**: Show template requirements, prompt to fill
-3. **Basket Setup Flow**: Guide user through foundational templates
-4. **Test**: Full user flow from basket creation to recipe execution
+#### Components Created
+
+1. **CoreContextSection** (`components/context/CoreContextSection.tsx`)
+   - Pinned at top of Context Blocks tab
+   - Displays template cards with fill status
+   - Separates required vs optional templates
+   - Shows completion badge when all required templates filled
+
+2. **TemplateFormModal** (`components/context/TemplateFormModal.tsx`)
+   - Dynamic form generation from template schema
+   - Supports field types: text, long_text, array, select
+   - Auto-loads existing values for editing
+   - Validates required fields before submission
+
+3. **SetupContextBanner** (`components/context/SetupContextBanner.tsx`)
+   - Displayed on Project Overview when templates incomplete
+   - Shows required template progress (X/Y filled)
+   - One-click navigation to Context page
+
+#### API Routes Created
+
+1. **`GET /api/projects/[id]/context/templates`**
+   - Lists all templates with fill status for project
+   - Returns completion stats (required_filled, required_total)
+
+2. **`GET/POST /api/projects/[id]/context/templates/[slug]`**
+   - GET: Fetch template schema and current values
+   - POST: Fill/update template (creates block via substrate-api)
+
+#### UI/UX Decisions
+
+1. **Project Creation Simplified**
+   - Removed `initial_context` and `files` from CreateProjectDialog
+   - Projects now redirect to Context page after creation
+   - Foundational context set up via Context Templates
+
+2. **Two-Tab Layout Preserved**
+   - Blocks tab: CoreContextSection pinned at top, then all blocks
+   - Assets tab: No changes
+
+3. **On-Demand Block Creation**
+   - No pre-created empty blocks
+   - Blocks created only when user fills templates
+   - Template status tracked via `metadata.template_id`
 
 ---
 
@@ -696,6 +736,6 @@ Future enhancement:
 
 ---
 
-**Document Status**: Design Complete
-**Next Steps**: Review with stakeholders, prioritize Phase 1 implementation
+**Document Status**: Implementation Complete (Phase 1 + Phase 3)
+**Remaining**: Phase 2 (Agent Integration) - context assembly refactoring
 **Owner**: Architecture Team

@@ -23,33 +23,22 @@ export async function POST(request: NextRequest) {
 
     const token = session.access_token;
 
-    const formData = await request.formData();
-
-    const projectName = formData.get('project_name') as string;
-    const initialContext = formData.get('initial_context') as string;
-    const description = formData.get('description') as string | null;
-    const files = formData.getAll('files') as File[];
+    const body = await request.json();
+    const { project_name, description } = body;
 
     // Validate required fields
-    if (!projectName || !projectName.trim()) {
+    if (!project_name || !project_name.trim()) {
       return NextResponse.json(
         { detail: 'Project name is required' },
         { status: 400 }
       );
     }
 
-    // Allow any non-empty context, or require files if context is empty
-    if ((!initialContext || initialContext.trim().length === 0) && files.length === 0) {
-      return NextResponse.json(
-        { detail: 'Either initial context or files are required' },
-        { status: 400 }
-      );
-    }
-
     // Forward to work-platform backend (canonical auth pattern)
+    // Initial context is now set up via Context Templates after project creation
     const backendPayload = {
-      project_name: projectName.trim(),
-      initial_context: initialContext.trim() || 'Initial project setup',
+      project_name: project_name.trim(),
+      initial_context: 'Project created - foundational context pending',
       description: description?.trim() || undefined,
     };
 
@@ -73,14 +62,6 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await backendResponse.json();
-
-    // TODO: If files were uploaded, send them to substrate-api for raw_dump ingestion
-    // For now, we'll just log them
-    if (files.length > 0) {
-      console.log(`[CREATE PROJECT] ${files.length} files uploaded, will be processed in future iteration`);
-      // Future: Upload files to substrate-api /api/dumps/upload
-    }
-
     return NextResponse.json(result);
   } catch (error) {
     console.error('[CREATE PROJECT API] Error:', error);
