@@ -14,7 +14,10 @@ from typing import List, Optional, Union
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+import anthropic
+import io
 
 from ..utils.jwt import verify_jwt
 from ..utils.service_auth import verify_user_or_service
@@ -512,6 +515,118 @@ async def delete_work_output(
     except Exception as e:
         logger.error(f"Failed to delete work output: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete work output")
+
+
+# ============================================================================
+# File Download Endpoint (Claude Files API)
+# ============================================================================
+
+
+MIME_TYPE_MAP = {
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+    "png": "image/png",
+    "csv": "text/csv",
+}
+
+
+@router.get("/{basket_id}/work-outputs/{output_id}/download")
+async def download_work_output_file(
+    basket_id: str,
+    output_id: str,
+    auth_info: dict = Depends(verify_user_or_service),
+):
+    """
+    Download a file-based work output via Claude Files API.
+
+    This endpoint streams the file content from Claude's Files API.
+    Only works for outputs that have a file_id (generated via Skills API).
+
+    Args:
+        basket_id: Basket ID
+        output_id: Work output ID
+
+    Returns:
+        StreamingResponse with file content
+
+    Raises:
+        400: Output is not a file output
+        404: Work output not found
+        500: Failed to download from Claude Files API
+    """
+    try:
+        # Verify workspace access
+        await verify_workspace_access(basket_id, auth_info)
+
+        # Get work output
+        result = (
+            supabase_admin_client.table("work_outputs")
+            .select("id, title, file_id, file_format, mime_type, metadata")
+            .eq("id", output_id)
+            .eq("basket_id", basket_id)
+            .single()
+            .execute()
+        )
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Work output not found")
+
+        output = result.data
+        file_id = output.get("file_id")
+
+        if not file_id:
+            raise HTTPException(
+                status_code=400,
+                detail="This work output is not a file output. Only file outputs can be downloaded."
+            )
+
+        # Get file format and determine mime type
+        file_format = output.get("file_format", "bin")
+        mime_type = output.get("mime_type") or MIME_TYPE_MAP.get(file_format, "application/octet-stream")
+
+        # Generate filename
+        title = output.get("title", "download")
+        # Sanitize title for filename
+        safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()[:50]
+        filename = f"{safe_title}.{file_format}" if safe_title else f"work_output.{file_format}"
+
+        logger.info(f"Downloading file {file_id} for work output {output_id}")
+
+        # Download from Claude Files API
+        try:
+            client = anthropic.Anthropic()
+            file_content = client.files.content(file_id)
+
+            # Read content into memory (Claude Files API returns bytes)
+            content_bytes = file_content.read()
+
+            # Create streaming response
+            return StreamingResponse(
+                io.BytesIO(content_bytes),
+                media_type=mime_type,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Content-Length": str(len(content_bytes)),
+                }
+            )
+
+        except anthropic.NotFoundError:
+            logger.error(f"File {file_id} not found in Claude Files API")
+            raise HTTPException(
+                status_code=404,
+                detail="File no longer available in Claude Files API. Files expire after 7 days."
+            )
+        except anthropic.APIError as e:
+            logger.error(f"Claude Files API error: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to download file: {str(e)}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to download work output file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to download file")
 
 
 # ============================================================================

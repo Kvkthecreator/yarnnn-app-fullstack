@@ -320,7 +320,7 @@ export default function TicketTrackingClient({
               </div>
               <div className="space-y-4">
                 {ticket.work_outputs.map((output) => (
-                  <OutputCard key={output.id} output={output} />
+                  <OutputCard key={output.id} output={output} basketId={ticket.basket_id} />
                 ))}
               </div>
             </Card>
@@ -447,8 +447,54 @@ export default function TicketTrackingClient({
   );
 }
 
-function OutputCard({ output }: { output: WorkOutput }) {
+function OutputCard({ output, basketId }: { output: WorkOutput; basketId: string }) {
   const isFileOutput = output.file_id && output.file_format;
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleDownload = async () => {
+    if (!isFileOutput) return;
+
+    setIsDownloading(true);
+    setDownloadError(null);
+
+    try {
+      const response = await fetch(
+        `/api/work-outputs/${output.id}/download?basket_id=${basketId}`
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Download failed' }));
+        throw new Error(error.detail || 'Download failed');
+      }
+
+      // Get filename from Content-Disposition header or generate one
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `${output.title}.${output.file_format}`;
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="(.+)"/);
+        if (match) {
+          filename = match[1];
+        }
+      }
+
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download failed:', error);
+      setDownloadError(error instanceof Error ? error.message : 'Download failed');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   return (
     <div className="border border-border rounded-lg p-4 space-y-3">
@@ -475,8 +521,17 @@ function OutputCard({ output }: { output: WorkOutput }) {
           </div>
         </div>
         {isFileOutput && (
-          <Button variant="ghost" size="sm">
-            <Download className="h-4 w-4" />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleDownload}
+            disabled={isDownloading}
+          >
+            {isDownloading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
           </Button>
         )}
       </div>
@@ -489,9 +544,16 @@ function OutputCard({ output }: { output: WorkOutput }) {
       )}
 
       {/* File download info */}
-      {isFileOutput && (
+      {isFileOutput && !downloadError && (
         <div className="text-sm text-success-foreground bg-surface-success border border-surface-success-border rounded p-2">
           File ready for download
+        </div>
+      )}
+
+      {/* Download error */}
+      {downloadError && (
+        <div className="text-sm text-destructive bg-surface-danger border border-surface-danger-border rounded p-2">
+          {downloadError}
         </div>
       )}
     </div>

@@ -44,6 +44,50 @@ def emit_task_update(ticket_id: str, update: dict):
     logger.info(f"[Task Update] {ticket_id}: {update.get('current_step', 'N/A')}")
 
 
+def get_final_todos(ticket_id: str) -> list[dict]:
+    """
+    Convert task updates to final_todos format for storage in work_tickets.metadata.
+
+    This is called when execution completes to persist the task history.
+
+    Returns:
+        List of todo items in TodoWrite format:
+        [
+            {"content": "...", "status": "completed", "activeForm": "..."},
+            ...
+        ]
+    """
+    updates = TASK_UPDATES.get(ticket_id, [])
+
+    # Convert updates to TodoWrite format
+    todos = []
+    for update in updates:
+        update_type = update.get("type", "")
+        status = update.get("status", "pending")
+
+        # Determine final status
+        if update_type in ["task_completed", "task_failed"]:
+            final_status = "completed" if update_type == "task_completed" else "failed"
+        elif status == "in_progress":
+            final_status = "completed"  # In-progress tasks are complete by end
+        else:
+            final_status = "completed"
+
+        todo = {
+            "content": update.get("current_step", "Task"),
+            "status": final_status,
+            "activeForm": update.get("activeForm", update.get("current_step", "Working")),
+        }
+        todos.append(todo)
+
+    return todos
+
+
+def cleanup_task_updates(ticket_id: str):
+    """Remove task updates for a ticket from memory after persistence."""
+    TASK_UPDATES.pop(ticket_id, None)
+
+
 async def task_update_generator(
     ticket_id: str,
     timeout: int = 600  # 10 minutes max

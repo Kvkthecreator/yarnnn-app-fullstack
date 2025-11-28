@@ -336,6 +336,10 @@ async def execute_reporting_workflow(
                         "output_count": len(result.work_outputs),
                     })
 
+                    # Get final todos before cleanup
+                    from app.work.task_streaming import get_final_todos, cleanup_task_updates
+                    final_todos = get_final_todos(_work_ticket_id)
+
                     # Update to completed
                     existing_ticket = bg_supabase.table("work_tickets").select("metadata").eq("id", _work_ticket_id).single().execute()
                     existing_metadata = existing_ticket.data.get("metadata", {}) if existing_ticket.data else {}
@@ -344,6 +348,7 @@ async def execute_reporting_workflow(
                         **existing_metadata,
                         "execution_time_ms": execution_time_ms,
                         "output_count": len(result.work_outputs),
+                        "final_todos": final_todos,  # Store task history for UI display
                         "token_usage": {
                             "input_tokens": result.input_tokens,
                             "output_tokens": result.output_tokens,
@@ -357,7 +362,10 @@ async def execute_reporting_workflow(
                         "metadata": updated_metadata,
                     }).eq("id", _work_ticket_id).execute()
 
-                    logger.info(f"[REPORTING WORKFLOW] Background complete: {len(result.work_outputs)} outputs")
+                    # Cleanup in-memory task updates
+                    cleanup_task_updates(_work_ticket_id)
+
+                    logger.info(f"[REPORTING WORKFLOW] Background complete: {len(result.work_outputs)} outputs, {len(final_todos)} todos stored")
 
                 except Exception as e:
                     logger.exception(f"[REPORTING WORKFLOW] Background execution failed: {e}")
