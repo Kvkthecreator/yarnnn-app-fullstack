@@ -30,13 +30,17 @@ interface GovernanceSettingsClientProps {
   workspaceName: string;
   initialSettings: any;
   userRole: string;
+  initialWorkSupervision: {
+    review_strategy: 'auto' | 'manual';
+  };
 }
 
 export default function GovernanceSettingsClient({ 
   workspaceId, 
   workspaceName, 
   initialSettings,
-  userRole 
+  userRole,
+  initialWorkSupervision,
 }: GovernanceSettingsClientProps) {
   const router = useRouter();
   const [settings, setSettings] = useState<GovernanceSettings>(() => {
@@ -160,6 +164,38 @@ export default function GovernanceSettingsClient({
 
   const governanceStatus = getGovernanceStatus();
   const StatusIcon = governanceStatus.icon;
+  const [workSupervision, setWorkSupervision] = useState<'auto' | 'manual'>(initialWorkSupervision.review_strategy);
+  const [wsSaving, setWsSaving] = useState(false);
+
+  const saveWorkSupervision = async () => {
+    setWsSaving(true);
+    try {
+      const res = await fetch('/api/work-supervision/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_strategy: workSupervision }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to update work supervision settings');
+      }
+      notificationService.notify({
+        type: 'work_supervision.settings.changed',
+        title: 'Work supervision updated',
+        message: `Default review strategy set to ${workSupervision === 'auto' ? 'Auto-approve' : 'Manual review'}.`,
+        severity: 'success',
+      });
+    } catch (error) {
+      notificationService.notify({
+        type: 'work_supervision.settings.changed',
+        title: 'Update failed',
+        message: error instanceof Error ? error.message : 'Failed to update work supervision',
+        severity: 'error',
+      });
+    } finally {
+      setWsSaving(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -196,7 +232,7 @@ export default function GovernanceSettingsClient({
 
         {/* (Removed) Content Review Controls — consolidated into Review Mode */}
 
-        {/* Simplified Mode Controls */}
+        {/* Simplified Mode Controls (Substrate Governance) */}
         <Card>
           <CardHeader className="p-6">
             <CardTitle>Review Mode</CardTitle>
@@ -285,6 +321,55 @@ export default function GovernanceSettingsClient({
                 </p>
               </div>
             </details>
+          </CardContent>
+        </Card>
+
+        {/* Work Supervision (Workspace default) */}
+        <Card>
+          <CardHeader className="p-6">
+            <CardTitle>Work Supervision (Workspace Default)</CardTitle>
+            <p className="text-sm text-gray-600 mt-2">
+              Default review posture for work outputs across all projects in this workspace.
+            </p>
+          </CardHeader>
+          <CardContent className="p-8 space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <button
+                onClick={() => setWorkSupervision('auto')}
+                className={`flex items-start gap-3 rounded-lg border-2 p-4 text-left transition ${
+                  workSupervision === 'auto'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-blue-300'
+                }`}
+              >
+                <div className="flex-1">
+                  <div className="font-medium text-sm text-gray-900">Auto-approve</div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Work outputs are auto-approved by default. Use project-level queues to spot-check as needed.
+                  </p>
+                </div>
+              </button>
+              <button
+                onClick={() => setWorkSupervision('manual')}
+                className={`flex items-start gap-3 rounded-lg border-2 p-4 text-left transition ${
+                  workSupervision === 'manual'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-blue-300'
+                }`}
+              >
+                <div className="flex-1">
+                  <div className="font-medium text-sm text-gray-900">Manual review required</div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    All work outputs stay pending until explicitly approved in the review queue.
+                  </p>
+                </div>
+              </button>
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={saveWorkSupervision} disabled={wsSaving}>
+                {wsSaving ? 'Saving…' : 'Save Work Supervision'}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
