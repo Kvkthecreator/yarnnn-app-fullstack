@@ -287,24 +287,6 @@ export default function Sidebar({ className }: SidebarProps) {
                   })}
                 </div>
               </section>
-              <section className="space-y-1">
-                <p className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Governance
-                </p>
-                <div className="flex flex-col gap-0.5">
-                  <SidebarItem
-                    href={GOVERNANCE_LINK.href}
-                    onClick={() => {
-                      if (isMobile) setOpen(false);
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <GOVERNANCE_LINK.icon size={14} />
-                      {GOVERNANCE_LINK.label}
-                    </span>
-                  </SidebarItem>
-                </div>
-              </section>
             </nav>
           ) : (
             <nav className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 py-6">
