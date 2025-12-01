@@ -14,6 +14,7 @@ import {
   AlertCircle,
   Plus,
   RefreshCw,
+  Anchor,
 } from "lucide-react";
 import { ProjectHealthCheck } from "@/components/projects/ProjectHealthCheck";
 import BlockDetailModal from "@/components/context/BlockDetailModal";
@@ -360,7 +361,8 @@ export default function ContextBlocksClient({ projectId, basketId }: ContextBloc
                     {block.semantic_type}
                   </Badge>
                   {block.anchor_role && (
-                    <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+                    <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1">
+                      <Anchor className="h-3 w-3" />
                       {block.anchor_role}
                     </Badge>
                   )}

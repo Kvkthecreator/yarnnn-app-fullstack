@@ -30,7 +30,7 @@ export default function UploadAssetModal({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadComplete, setUploadComplete] = useState(false);
 
-  // Dropzone configuration
+  // Dropzone configuration - disabled when modal is closed to prevent event leaks
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: (acceptedFiles) => {
       if (acceptedFiles.length > 0) {
@@ -40,6 +40,10 @@ export default function UploadAssetModal({
     },
     multiple: false,
     maxSize: 50 * 1024 * 1024, // 50MB
+    disabled: !open, // Disable when modal is closed
+    noClick: !open,
+    noKeyboard: !open,
+    noDrag: !open,
   });
 
   // Format file size
@@ -110,6 +114,9 @@ export default function UploadAssetModal({
       onClose();
     }
   };
+
+  // Don't render anything when closed to ensure complete cleanup
+  if (!open) return null;
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) handleClose(); }}>

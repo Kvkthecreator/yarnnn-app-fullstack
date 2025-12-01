@@ -148,6 +148,9 @@ export default function BlockFormModal({
     }
   };
 
+  // Don't render when closed to ensure complete cleanup
+  if (!open) return null;
+
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent className="max-w-lg w-full">

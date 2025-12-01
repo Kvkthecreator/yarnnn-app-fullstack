@@ -14,7 +14,7 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from '@/components/ui/AlertDialog';
-import { Database, Copy, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { Database, Copy, Loader2, Pencil, Trash2, Anchor } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -182,8 +182,9 @@ export default function BlockDetailModal({
                   </Badge>
                 )}
                 {block.anchor_role && (
-                  <Badge variant="outline" className="bg-surface-warning text-warning-foreground border-surface-warning-border">
-                    Anchor: {block.anchor_role}
+                  <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 gap-1">
+                    <Anchor className="h-3 w-3" />
+                    {block.anchor_role}
                   </Badge>
                 )}
               </div>
@@ -302,6 +303,9 @@ export default function BlockDetailModal({
       </div>
     );
   };
+
+  // Don't render when closed to ensure complete cleanup
+  if (!open) return null;
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>

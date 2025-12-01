@@ -106,6 +106,9 @@ export function AddContextModal({
     }
   };
 
+  // Don't render when closed to ensure complete cleanup
+  if (!isOpen) return null;
+
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-2xl">

@@ -87,6 +87,9 @@ export default function AddEntryModal({
     }
   };
 
+  // Don't render when closed to ensure complete cleanup
+  if (!open) return null;
+
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) handleClose(); }}>
       <DialogContent className="max-w-2xl">
