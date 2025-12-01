@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -11,10 +11,13 @@ import {
   Brain,
   Search,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Plus,
+  RefreshCw,
 } from "lucide-react";
 import { ProjectHealthCheck } from "@/components/projects/ProjectHealthCheck";
 import BlockDetailModal from "@/components/context/BlockDetailModal";
+import BlockFormModal from "@/components/context/BlockFormModal";
 
 interface Block {
   id: string;
@@ -42,11 +45,14 @@ export default function ContextBlocksClient({ projectId, basketId }: ContextBloc
   const [isPolling, setIsPolling] = useState(false);
   const [pollingMessage, setPollingMessage] = useState<string | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingBlock, setEditingBlock] = useState<Block | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Fetch blocks from BFF
-  const fetchBlocks = async () => {
+  const fetchBlocks = useCallback(async (showLoading = true) => {
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       const response = await fetch(`/api/projects/${projectId}/context`);
 
       if (!response.ok) {
@@ -62,12 +68,34 @@ export default function ContextBlocksClient({ projectId, basketId }: ContextBloc
       setError(err instanceof Error ? err.message : "Failed to load context");
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, [projectId]);
 
   useEffect(() => {
     fetchBlocks();
-  }, [projectId]);
+  }, [fetchBlocks]);
+
+  // Refresh handler for manual refresh
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchBlocks(false);
+  };
+
+  // Handle successful create/edit
+  const handleBlockSaved = () => {
+    fetchBlocks(false);
+  };
+
+  // Handle successful delete
+  const handleBlockDeleted = () => {
+    fetchBlocks(false);
+  };
+
+  // Handle edit from detail modal
+  const handleEditBlock = (block: Block) => {
+    setEditingBlock(block);
+  };
 
   // Polling logic for new blocks after context submission
   const startPolling = () => {
@@ -211,6 +239,26 @@ export default function ContextBlocksClient({ projectId, basketId }: ContextBloc
         </div>
       )}
 
+      {/* Header with Create Button */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-foreground">Context Blocks</h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="h-8 w-8 p-0"
+          >
+            <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
+          </Button>
+        </div>
+        <Button onClick={() => setShowCreateModal(true)} className="gap-2">
+          <Plus className="h-4 w-4" />
+          Add Block
+        </Button>
+      </div>
+
       {/* Stats Bar */}
       <div className="flex items-center gap-4">
         <Card className="flex-1 p-4">
@@ -298,7 +346,11 @@ export default function ContextBlocksClient({ projectId, basketId }: ContextBloc
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {filteredBlocks.map((block) => (
-            <Card key={block.id} className="p-4 hover:shadow-md transition-shadow">
+            <Card
+              key={block.id}
+              className="p-4 cursor-pointer transition hover:border-ring hover:shadow-sm"
+              onClick={() => setSelectedBlockId(block.id)}
+            >
               <div className="flex items-start justify-between gap-3 mb-3">
                 <h3 className="font-medium text-foreground flex-1 line-clamp-2">
                   {block.title}
@@ -315,27 +367,17 @@ export default function ContextBlocksClient({ projectId, basketId }: ContextBloc
                 </div>
               </div>
 
-              <p className="text-sm text-muted-foreground line-clamp-3 mb-4">
+              <p className="text-sm text-muted-foreground line-clamp-3 mb-3">
                 {block.content}
               </p>
 
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <div className="flex items-center gap-3">
-                  {block.confidence !== null && (
-                    <span>
-                      {Math.round(block.confidence * 100)}% confidence
-                    </span>
-                  )}
-                  {block.times_referenced !== null && block.times_referenced > 0 && (
-                    <span>{block.times_referenced} refs</span>
-                  )}
-                </div>
-                <button
-                  onClick={() => setSelectedBlockId(block.id)}
-                  className="flex items-center gap-1 text-primary hover:text-primary/80 transition-colors"
-                >
-                  <span>Show Details</span>
-                </button>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                {block.confidence !== null && (
+                  <span>{Math.round(block.confidence * 100)}% confidence</span>
+                )}
+                {block.times_referenced !== null && block.times_referenced > 0 && (
+                  <span>{block.times_referenced} refs</span>
+                )}
               </div>
             </Card>
           ))}
@@ -349,6 +391,27 @@ export default function ContextBlocksClient({ projectId, basketId }: ContextBloc
         basketId={basketId}
         open={selectedBlockId !== null}
         onClose={() => setSelectedBlockId(null)}
+        onEdit={handleEditBlock}
+        onDeleted={handleBlockDeleted}
+      />
+
+      {/* Create Block Modal */}
+      <BlockFormModal
+        projectId={projectId}
+        basketId={basketId}
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={handleBlockSaved}
+      />
+
+      {/* Edit Block Modal */}
+      <BlockFormModal
+        projectId={projectId}
+        basketId={basketId}
+        block={editingBlock}
+        open={editingBlock !== null}
+        onClose={() => setEditingBlock(null)}
+        onSuccess={handleBlockSaved}
       />
     </div>
   );

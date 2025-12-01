@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from datetime import datetime
 from uuid import uuid4, UUID
 from typing import Optional
 
@@ -448,6 +449,527 @@ async def post_basket_work(
         await persist_delta(db, delta, req.request_id)
         await mark_processed(db, req.request_id, delta.delta_id)
         return delta
+
+
+# ========================================================================
+# User-Authored Block CRUD (Direct, No Governance)
+#
+# These endpoints enable direct block management for USER-authored content.
+# Governance is reserved for AGENT outputs where quality is uncertain.
+# User inputs are trusted - the user IS providing the judgment.
+#
+# Key safeguards maintained:
+# - Async embedding regeneration (semantic search integrity)
+# - Timeline events (audit trail / provenance)
+# - Workspace scoping (security)
+# - State machine validation (no invalid state transitions)
+# ========================================================================
+
+
+class CreateBlockRequest(BaseModel):
+    """Request model for creating a user-authored block."""
+
+    title: str = Field(..., min_length=1, max_length=500, description="Block title")
+    content: str = Field(..., min_length=1, max_length=50000, description="Block content")
+    semantic_type: str = Field(..., description="Semantic type (fact, metric, intent, etc.)")
+    workspace_id: str = Field(..., description="Workspace ID")
+    anchor_role: Optional[str] = Field(None, description="Optional anchor role")
+    metadata: Optional[dict] = Field(default_factory=dict, description="Optional metadata")
+
+
+class UpdateBlockRequest(BaseModel):
+    """Request model for updating a user-authored block."""
+
+    title: Optional[str] = Field(None, max_length=500, description="Updated title")
+    content: Optional[str] = Field(None, max_length=50000, description="Updated content")
+    semantic_type: Optional[str] = Field(None, description="Updated semantic type")
+    metadata: Optional[dict] = Field(None, description="Updated metadata")
+
+
+class BlockResponse(BaseModel):
+    """Response model for block operations."""
+
+    id: str
+    basket_id: str
+    workspace_id: str
+    title: str
+    content: str
+    semantic_type: str
+    state: str
+    confidence_score: Optional[float] = None
+    anchor_role: Optional[str] = None
+    created_at: str
+    updated_at: Optional[str] = None
+    warning: Optional[str] = None  # For near-duplicate warnings
+
+
+@router.post("/{basket_id}/blocks", response_model=BlockResponse, status_code=201)
+async def create_block(
+    basket_id: str,
+    request: CreateBlockRequest,
+    db=Depends(get_db),  # noqa: B008
+):
+    """
+    Create a user-authored block directly (no governance).
+
+    User-provided blocks are trusted and created in ACCEPTED state immediately.
+    This bypasses the PROPOSED → ACCEPTED governance flow because the user
+    IS providing the judgment (unlike agent outputs which need review).
+
+    Safeguards maintained:
+    - Async embedding generation queued after creation
+    - Timeline event recorded for audit trail
+    - Workspace scoping enforced
+
+    Args:
+        basket_id: Target basket UUID
+        request: Block creation parameters
+
+    Returns:
+        Created block with optional near-duplicate warning
+
+    Raises:
+        HTTPException 400: Invalid basket_id or validation error
+        HTTPException 500: Database error
+    """
+    import logging
+    from uuid import uuid4
+    from datetime import datetime
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Validate UUIDs
+        try:
+            basket_uuid = UUID(basket_id)
+            workspace_uuid = UUID(request.workspace_id)
+        except (ValueError, AttributeError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid UUID format: {str(e)}",
+            ) from e
+
+        # Generate block ID
+        block_id = str(uuid4())
+
+        # User-authored blocks get ACCEPTED state and high confidence
+        block_data = {
+            "id": block_id,
+            "basket_id": str(basket_uuid),
+            "workspace_id": str(workspace_uuid),
+            "title": request.title,
+            "content": request.content,
+            "semantic_type": request.semantic_type,
+            "state": "ACCEPTED",  # User-authored = trusted
+            "confidence_score": 1.0,  # User-provided = highest confidence
+            "anchor_role": request.anchor_role,
+            "anchor_status": "accepted" if request.anchor_role else None,
+            "anchor_confidence": 1.0 if request.anchor_role else None,
+            "metadata": {
+                **(request.metadata or {}),
+                "source": "user_authored",
+                "created_via": "direct_block_crud",
+            },
+        }
+
+        # Insert block
+        query = """
+            INSERT INTO blocks (
+                id, basket_id, workspace_id, title, content, semantic_type,
+                state, confidence_score, anchor_role, anchor_status,
+                anchor_confidence, metadata
+            )
+            VALUES (
+                :id, :basket_id, :workspace_id, :title, :content, :semantic_type,
+                :state, :confidence_score, :anchor_role, :anchor_status,
+                :anchor_confidence, :metadata
+            )
+            RETURNING id, basket_id, workspace_id, title, content, semantic_type,
+                      state, confidence_score, anchor_role, created_at, updated_at
+        """
+
+        result = await db.fetch_one(
+            query,
+            values={
+                **block_data,
+                "metadata": json.dumps(block_data["metadata"]),
+            },
+        )
+
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to create block")
+
+        logger.info(
+            f"[BLOCK CREATE] Created user-authored block {block_id} "
+            f"in basket {basket_id} (type={request.semantic_type})"
+        )
+
+        # Queue async embedding generation (non-blocking)
+        try:
+            from jobs.embedding_generator import queue_embedding_generation
+            import asyncio
+            asyncio.create_task(queue_embedding_generation(block_id))
+            logger.debug(f"[BLOCK CREATE] Queued embedding generation for {block_id}")
+        except Exception as embed_err:
+            logger.warning(f"[BLOCK CREATE] Embedding queue failed (non-fatal): {embed_err}")
+
+        # Emit timeline event (non-blocking)
+        try:
+            timeline_query = """
+                SELECT emit_timeline_event(
+                    :basket_id, 'block.created', :block_id,
+                    :event_data, :workspace_id, NULL, 'user_authored'
+                )
+            """
+            await db.execute(
+                timeline_query,
+                values={
+                    "basket_id": str(basket_uuid),
+                    "block_id": block_id,
+                    "event_data": json.dumps({
+                        "block_id": block_id,
+                        "semantic_type": request.semantic_type,
+                        "source": "user_authored",
+                    }),
+                    "workspace_id": str(workspace_uuid),
+                },
+            )
+        except Exception as timeline_err:
+            logger.warning(f"[BLOCK CREATE] Timeline event failed (non-fatal): {timeline_err}")
+
+        return BlockResponse(
+            id=str(result["id"]),
+            basket_id=str(result["basket_id"]),
+            workspace_id=str(result["workspace_id"]),
+            title=result["title"],
+            content=result["content"],
+            semantic_type=result["semantic_type"],
+            state=result["state"],
+            confidence_score=result["confidence_score"],
+            anchor_role=result["anchor_role"],
+            created_at=result["created_at"].isoformat(),
+            updated_at=result["updated_at"].isoformat() if result["updated_at"] else None,
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.exception(f"Failed to create block in basket {basket_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create block: {str(e)}"
+        ) from e
+
+
+@router.put("/{basket_id}/blocks/{block_id}", response_model=BlockResponse)
+async def update_block(
+    basket_id: str,
+    block_id: str,
+    request: UpdateBlockRequest,
+    db=Depends(get_db),  # noqa: B008
+):
+    """
+    Update a user-authored block directly (no governance).
+
+    Only blocks in ACCEPTED or PROPOSED state can be updated.
+    LOCKED blocks cannot be modified (require explicit unlock first).
+
+    Safeguards maintained:
+    - Async embedding regeneration queued after update
+    - Timeline event recorded for audit trail
+    - State machine validation
+
+    Args:
+        basket_id: Basket UUID
+        block_id: Block UUID to update
+        request: Fields to update
+
+    Returns:
+        Updated block
+
+    Raises:
+        HTTPException 400: Invalid UUID format
+        HTTPException 403: Block is LOCKED and cannot be modified
+        HTTPException 404: Block not found
+        HTTPException 500: Database error
+    """
+    import logging
+    from datetime import datetime
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Validate UUIDs
+        try:
+            basket_uuid = UUID(basket_id)
+            block_uuid = UUID(block_id)
+        except (ValueError, AttributeError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid UUID format: {str(e)}",
+            ) from e
+
+        # Fetch existing block to check state
+        check_query = """
+            SELECT id, state, workspace_id FROM blocks
+            WHERE id = :block_id AND basket_id = :basket_id
+        """
+        existing = await db.fetch_one(
+            check_query,
+            values={"block_id": str(block_uuid), "basket_id": str(basket_uuid)},
+        )
+
+        if not existing:
+            raise HTTPException(status_code=404, detail="Block not found")
+
+        # Prevent modification of LOCKED blocks
+        if existing["state"] == "LOCKED":
+            raise HTTPException(
+                status_code=403,
+                detail="LOCKED blocks cannot be modified. Unlock first if needed.",
+            )
+
+        # Build update query dynamically based on provided fields
+        update_fields = []
+        update_values = {"block_id": str(block_uuid), "basket_id": str(basket_uuid)}
+
+        if request.title is not None:
+            update_fields.append("title = :title")
+            update_values["title"] = request.title
+
+        if request.content is not None:
+            update_fields.append("content = :content")
+            update_values["content"] = request.content
+            # Clear embedding when content changes (will be regenerated)
+            update_fields.append("embedding = NULL")
+
+        if request.semantic_type is not None:
+            update_fields.append("semantic_type = :semantic_type")
+            update_values["semantic_type"] = request.semantic_type
+
+        if request.metadata is not None:
+            update_fields.append("metadata = metadata || :metadata")
+            update_values["metadata"] = json.dumps({
+                **request.metadata,
+                "last_modified_via": "direct_block_crud",
+                "modified_at": datetime.utcnow().isoformat(),
+            })
+
+        if not update_fields:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        # Add updated_at
+        update_fields.append("updated_at = NOW()")
+
+        update_query = f"""
+            UPDATE blocks
+            SET {', '.join(update_fields)}
+            WHERE id = :block_id AND basket_id = :basket_id
+            RETURNING id, basket_id, workspace_id, title, content, semantic_type,
+                      state, confidence_score, anchor_role, created_at, updated_at
+        """
+
+        result = await db.fetch_one(update_query, values=update_values)
+
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to update block")
+
+        logger.info(
+            f"[BLOCK UPDATE] Updated block {block_id} in basket {basket_id}"
+        )
+
+        # Queue async embedding regeneration if content changed
+        if request.content is not None:
+            try:
+                from jobs.embedding_generator import queue_embedding_generation
+                import asyncio
+                asyncio.create_task(queue_embedding_generation(block_id))
+                logger.debug(f"[BLOCK UPDATE] Queued embedding regeneration for {block_id}")
+            except Exception as embed_err:
+                logger.warning(f"[BLOCK UPDATE] Embedding queue failed (non-fatal): {embed_err}")
+
+        # Emit timeline event
+        try:
+            timeline_query = """
+                SELECT emit_timeline_event(
+                    :basket_id, 'block.updated', :block_id,
+                    :event_data, :workspace_id, NULL, 'user_authored'
+                )
+            """
+            await db.execute(
+                timeline_query,
+                values={
+                    "basket_id": str(basket_uuid),
+                    "block_id": block_id,
+                    "event_data": json.dumps({
+                        "block_id": block_id,
+                        "fields_updated": list(update_values.keys()),
+                        "source": "user_authored",
+                    }),
+                    "workspace_id": str(existing["workspace_id"]),
+                },
+            )
+        except Exception as timeline_err:
+            logger.warning(f"[BLOCK UPDATE] Timeline event failed (non-fatal): {timeline_err}")
+
+        return BlockResponse(
+            id=str(result["id"]),
+            basket_id=str(result["basket_id"]),
+            workspace_id=str(result["workspace_id"]),
+            title=result["title"],
+            content=result["content"],
+            semantic_type=result["semantic_type"],
+            state=result["state"],
+            confidence_score=result["confidence_score"],
+            anchor_role=result["anchor_role"],
+            created_at=result["created_at"].isoformat(),
+            updated_at=result["updated_at"].isoformat() if result["updated_at"] else None,
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.exception(f"Failed to update block {block_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update block: {str(e)}"
+        ) from e
+
+
+@router.delete("/{basket_id}/blocks/{block_id}", status_code=200)
+async def delete_block(
+    basket_id: str,
+    block_id: str,
+    db=Depends(get_db),  # noqa: B008
+):
+    """
+    Soft-delete a block by setting state to SUPERSEDED.
+
+    LOCKED blocks cannot be deleted (require explicit unlock first).
+    This is a soft-delete - the block remains in the database for
+    historical record but is excluded from active queries.
+
+    Args:
+        basket_id: Basket UUID
+        block_id: Block UUID to delete
+
+    Returns:
+        Deletion confirmation
+
+    Raises:
+        HTTPException 400: Invalid UUID format
+        HTTPException 403: Block is LOCKED and cannot be deleted
+        HTTPException 404: Block not found
+        HTTPException 500: Database error
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Validate UUIDs
+        try:
+            basket_uuid = UUID(basket_id)
+            block_uuid = UUID(block_id)
+        except (ValueError, AttributeError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid UUID format: {str(e)}",
+            ) from e
+
+        # Fetch existing block to check state
+        check_query = """
+            SELECT id, state, workspace_id FROM blocks
+            WHERE id = :block_id AND basket_id = :basket_id
+        """
+        existing = await db.fetch_one(
+            check_query,
+            values={"block_id": str(block_uuid), "basket_id": str(basket_uuid)},
+        )
+
+        if not existing:
+            raise HTTPException(status_code=404, detail="Block not found")
+
+        # Prevent deletion of LOCKED blocks
+        if existing["state"] == "LOCKED":
+            raise HTTPException(
+                status_code=403,
+                detail="LOCKED blocks cannot be deleted. Unlock first if needed.",
+            )
+
+        # Soft-delete by setting state to SUPERSEDED
+        old_state = existing["state"]
+        delete_query = """
+            UPDATE blocks
+            SET state = 'SUPERSEDED',
+                updated_at = NOW(),
+                metadata = metadata || :delete_metadata
+            WHERE id = :block_id AND basket_id = :basket_id
+            RETURNING id
+        """
+
+        result = await db.fetch_one(
+            delete_query,
+            values={
+                "block_id": str(block_uuid),
+                "basket_id": str(basket_uuid),
+                "delete_metadata": json.dumps({
+                    "deleted_via": "direct_block_crud",
+                    "deleted_at": datetime.utcnow().isoformat(),
+                    "previous_state": old_state,
+                }),
+            },
+        )
+
+        if not result:
+            raise HTTPException(status_code=500, detail="Failed to delete block")
+
+        logger.info(
+            f"[BLOCK DELETE] Soft-deleted block {block_id} in basket {basket_id} "
+            f"(state: {old_state} → SUPERSEDED)"
+        )
+
+        # Emit timeline event
+        try:
+            timeline_query = """
+                SELECT emit_timeline_event(
+                    :basket_id, 'block.state_changed', :block_id,
+                    :event_data, :workspace_id, NULL, 'user_authored'
+                )
+            """
+            await db.execute(
+                timeline_query,
+                values={
+                    "basket_id": str(basket_uuid),
+                    "block_id": block_id,
+                    "event_data": json.dumps({
+                        "block_id": block_id,
+                        "old_state": old_state,
+                        "new_state": "SUPERSEDED",
+                        "reason": "user_deleted",
+                    }),
+                    "workspace_id": str(existing["workspace_id"]),
+                },
+            )
+        except Exception as timeline_err:
+            logger.warning(f"[BLOCK DELETE] Timeline event failed (non-fatal): {timeline_err}")
+
+        return {
+            "status": "deleted",
+            "block_id": block_id,
+            "basket_id": basket_id,
+            "previous_state": old_state,
+            "new_state": "SUPERSEDED",
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.exception(f"Failed to delete block {block_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete block: {str(e)}"
+        ) from e
 
 
 @router.get("/{basket_id}/deltas")

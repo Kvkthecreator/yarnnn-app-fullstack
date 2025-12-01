@@ -4,7 +4,17 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Database, Copy, Loader2 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/AlertDialog';
+import { Database, Copy, Loader2, Pencil, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -29,6 +39,8 @@ interface BlockDetailModalProps {
   basketId: string;
   open: boolean;
   onClose: () => void;
+  onEdit?: (block: Block) => void;
+  onDeleted?: () => void;
 }
 
 export default function BlockDetailModal({
@@ -37,11 +49,15 @@ export default function BlockDetailModal({
   basketId,
   open,
   onClose,
+  onEdit,
+  onDeleted,
 }: BlockDetailModalProps) {
   const [loading, setLoading] = useState(true);
   const [block, setBlock] = useState<Block | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'content' | 'metadata'>('content');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (open && blockId) {
@@ -76,6 +92,42 @@ export default function BlockDetailModal({
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
   };
+
+  const handleDelete = async () => {
+    if (!blockId) return;
+
+    setDeleting(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/context/${blockId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ detail: 'Failed to delete block' }));
+        throw new Error(data.detail || 'Failed to delete block');
+      }
+
+      setShowDeleteConfirm(false);
+      onClose();
+      onDeleted?.();
+    } catch (err) {
+      console.error('[Block Detail Modal] Delete error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to delete block');
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleEditClick = () => {
+    if (block) {
+      onClose();
+      onEdit?.(block);
+    }
+  };
+
+  // Check if block can be edited/deleted (not LOCKED)
+  const canModify = block && block.state !== 'LOCKED';
 
   const formatTimestamp = (timestamp: string) => {
     return new Date(timestamp).toLocaleString();
@@ -309,11 +361,74 @@ export default function BlockDetailModal({
         </div>
 
         <DialogFooter className="border-t border-surface-primary-border p-4">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            Close
-          </Button>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2">
+              {canModify && onEdit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleEditClick}
+                  className="gap-1.5"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+              )}
+              {canModify && onDeleted && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/30"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </Button>
+              )}
+              {block?.state === 'LOCKED' && (
+                <span className="text-xs text-muted-foreground">
+                  Locked blocks cannot be modified
+                </span>
+              )}
+            </div>
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Block</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this block? This action will mark it as superseded
+              and remove it from active context. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setShowDeleteConfirm(false)} disabled={deleting}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete Block'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
