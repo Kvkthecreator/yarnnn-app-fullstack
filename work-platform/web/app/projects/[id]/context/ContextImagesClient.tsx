@@ -12,7 +12,6 @@ import {
   Search,
   Download,
   Trash2,
-  Upload,
   Sparkles,
   X,
   ZoomIn,
@@ -29,13 +28,11 @@ import type { Asset } from "@/lib/types/substrate";
 interface ContextImagesClientProps {
   projectId: string;
   basketId: string;
-  onUpload?: () => void;
 }
 
 export default function ContextImagesClient({
   projectId,
   basketId,
-  onUpload,
 }: ContextImagesClientProps) {
   const [images, setImages] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,14 +186,6 @@ export default function ContextImagesClient({
               className="pl-9 w-64"
             />
           </div>
-
-          {/* Upload Button */}
-          {onUpload && (
-            <Button onClick={onUpload}>
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Image
-            </Button>
-          )}
         </div>
       </div>
 
@@ -204,17 +193,11 @@ export default function ContextImagesClient({
       {filteredImages.length === 0 ? (
         <Card className="p-12 text-center">
           <ImageIcon className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-          <p className="text-muted-foreground mb-4">
+          <p className="text-muted-foreground">
             {images.length === 0
-              ? "No images yet. Upload screenshots, diagrams, or other visuals."
+              ? "No images yet. Use the \"Add Context\" button to upload screenshots, diagrams, or other visuals."
               : "No images match your search."}
           </p>
-          {images.length === 0 && onUpload && (
-            <Button onClick={onUpload}>
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Image
-            </Button>
-          )}
         </Card>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">

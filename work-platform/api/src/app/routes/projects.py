@@ -44,6 +44,12 @@ class CreateProjectRequest(BaseModel):
         min_length=1,
         max_length=200,
     )
+    project_intent: str = Field(
+        ...,
+        description="One-sentence project intent/goal (required, creates foundational intent block)",
+        min_length=1,
+        max_length=500,
+    )
     initial_context: str = Field(
         default="",
         description="Initial context/notes to seed project (optional if files are provided)",
@@ -62,7 +68,8 @@ class ProjectResponse(BaseModel):
     project_id: str
     project_name: str
     basket_id: str
-    dump_id: str
+    dump_id: Optional[str] = None  # Optional - only created if initial_context provided
+    intent_block_id: Optional[str] = None  # Foundational intent block
     agent_session_ids: dict[str, str]  # Changed from agent_ids: list[str] to match scaffolder
     work_request_id: str
     status: str
@@ -146,6 +153,7 @@ async def create_project(
             user_id=user_id,
             workspace_id=workspace_id,
             project_name=request.project_name,
+            project_intent=request.project_intent,
             initial_context=request.initial_context,
             description=request.description,
         )

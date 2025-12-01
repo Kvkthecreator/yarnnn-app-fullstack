@@ -15,7 +15,6 @@ import {
   Search,
   Download,
   Trash2,
-  Upload,
   Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -26,7 +25,6 @@ import type { Asset } from "@/lib/types/substrate";
 interface ContextDocumentsClientProps {
   projectId: string;
   basketId: string;
-  onUpload?: () => void;
 }
 
 // Map MIME types to icons
@@ -59,7 +57,6 @@ function getFileExtension(fileName: string): string {
 export default function ContextDocumentsClient({
   projectId,
   basketId,
-  onUpload,
 }: ContextDocumentsClientProps) {
   const [documents, setDocuments] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -187,14 +184,6 @@ export default function ContextDocumentsClient({
               className="pl-9 w-64"
             />
           </div>
-
-          {/* Upload Button */}
-          {onUpload && (
-            <Button onClick={onUpload}>
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Document
-            </Button>
-          )}
         </div>
       </div>
 
@@ -202,17 +191,11 @@ export default function ContextDocumentsClient({
       {filteredDocuments.length === 0 ? (
         <Card className="p-12 text-center">
           <FileText className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-          <p className="text-muted-foreground mb-4">
+          <p className="text-muted-foreground">
             {documents.length === 0
-              ? "No documents yet. Upload PDFs, spreadsheets, or other documents."
+              ? "No documents yet. Use the \"Add Context\" button to upload PDFs, spreadsheets, or other documents."
               : "No documents match your search."}
           </p>
-          {documents.length === 0 && onUpload && (
-            <Button onClick={onUpload}>
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Document
-            </Button>
-          )}
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

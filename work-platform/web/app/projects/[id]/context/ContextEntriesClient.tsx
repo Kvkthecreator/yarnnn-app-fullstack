@@ -15,7 +15,6 @@ import {
   Clock,
   CheckCircle,
   XCircle,
-  Plus,
 } from "lucide-react";
 import {
   Select,
@@ -33,13 +32,11 @@ import { cn } from "@/lib/utils";
 interface ContextEntriesClientProps {
   projectId: string;
   basketId: string;
-  onAddEntry?: () => void;
 }
 
 export default function ContextEntriesClient({
   projectId,
   basketId,
-  onAddEntry,
 }: ContextEntriesClientProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -196,14 +193,6 @@ export default function ContextEntriesClient({
               <SelectItem value="agent">Agent Only</SelectItem>
             </SelectContent>
           </Select>
-
-          {/* Add Entry Button */}
-          {onAddEntry && (
-            <Button onClick={onAddEntry}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Entry
-            </Button>
-          )}
         </div>
       </div>
 
@@ -211,17 +200,11 @@ export default function ContextEntriesClient({
       {filteredEntries.length === 0 ? (
         <Card className="p-12 text-center">
           <FileText className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-          <p className="text-muted-foreground mb-4">
+          <p className="text-muted-foreground">
             {entries.length === 0
-              ? "No entries yet. Add text content to get started."
+              ? "No entries yet. Use the \"Add Context\" button to add text content."
               : "No entries match your search."}
           </p>
-          {entries.length === 0 && onAddEntry && (
-            <Button onClick={onAddEntry}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Entry
-            </Button>
-          )}
         </Card>
       ) : (
         <div className="space-y-3">
