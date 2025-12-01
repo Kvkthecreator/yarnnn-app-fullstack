@@ -133,8 +133,8 @@ export default function BlockDetailModal({
     return new Date(timestamp).toLocaleString();
   };
 
-  const formatConfidence = (value: number | null) => {
-    if (value === null || Number.isNaN(value)) return '—';
+  const formatConfidence = (value: number | null | undefined) => {
+    if (value === null || value === undefined || Number.isNaN(value)) return '—';
     return `${Math.round(value * 100)}%`;
   };
 
@@ -306,28 +306,27 @@ export default function BlockDetailModal({
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent className="max-w-2xl w-full max-h-[80vh] flex flex-col p-0">
-        <DialogHeader className="p-4 border-b border-surface-primary-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Database className="h-4 w-4 text-primary" />
-              <DialogTitle className="text-lg font-medium text-foreground">
-                {block ? `Block - ${block.semantic_type}` : 'Block Details'}
-              </DialogTitle>
-            </div>
-            <div className="flex items-center gap-2">
-{blockId && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => copyToClipboard(blockId)}
-                  className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"
-                  title="Copy block ID"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  <span className="text-xs">Copy ID</span>
-                </Button>
-              )}
-            </div>
+        <DialogHeader className="p-4 pb-3 border-b border-surface-primary-border">
+          <div className="flex items-center gap-3">
+            <Database className="h-4 w-4 text-primary flex-shrink-0" />
+            <DialogTitle className="text-lg font-medium text-foreground flex-1">
+              {block ? `Block - ${block.semantic_type}` : 'Block Details'}
+            </DialogTitle>
+            {blockId && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyToClipboard(blockId);
+                }}
+                className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground flex-shrink-0"
+                title="Copy block ID"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                <span className="text-xs">Copy ID</span>
+              </Button>
+            )}
           </div>
         </DialogHeader>
 
