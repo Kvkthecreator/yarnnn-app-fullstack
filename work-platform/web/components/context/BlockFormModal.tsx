@@ -25,10 +25,11 @@ const SEMANTIC_TYPE_OPTIONS = [
 // Anchor role options (foundational blocks that agents prioritize)
 const ANCHOR_ROLE_OPTIONS = [
   { value: '', label: 'None', description: 'Regular block (not anchored)' },
+  { value: 'topic', label: 'Topic', description: 'What you are working on' },
+  { value: 'vision', label: 'Vision', description: 'Why this project exists' },
   { value: 'problem', label: 'Problem', description: 'Core pain point being solved' },
   { value: 'customer', label: 'Customer', description: 'Target user or audience' },
   { value: 'solution', label: 'Solution', description: 'How the problem is solved' },
-  { value: 'vision', label: 'Vision', description: 'Long-term direction' },
   { value: 'feature', label: 'Feature', description: 'Key capability' },
   { value: 'constraint', label: 'Constraint', description: 'Hard limitation' },
   { value: 'metric', label: 'Metric', description: 'Success measure' },

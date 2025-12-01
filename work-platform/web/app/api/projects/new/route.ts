@@ -8,15 +8,21 @@ const SUBSTRATE_API_URL = process.env.SUBSTRATE_API_URL || 'http://localhost:100
 /**
  * POST /api/projects/new
  *
- * Creates a new project with guaranteed foundational context.
+ * Creates a new project with TWO guaranteed foundational anchor blocks.
  *
  * Accepts either:
- * - JSON body: { project_name, project_intent, description? }
- * - FormData: project_name, project_intent, description?, seed_file?
+ * - JSON body: { project_topic, project_intent }
+ * - FormData: project_topic, project_intent, seed_file?
  *
  * Flow:
- * 1. Create project via backend (includes intent block creation)
- * 2. If seed_file provided, upload to reference_assets and trigger anchor seeding
+ * 1. Create project via backend which creates TWO anchor blocks:
+ *    - Topic block (anchor_role: 'topic') - WHAT you're working on
+ *    - Vision block (anchor_role: 'vision') - WHY you're working on it
+ * 2. If seed_file provided, upload to reference_assets for P1 extraction
+ *
+ * KEY INSIGHT: topic + intent create DIRECT anchor blocks (trusted, ACCEPTED).
+ * Only seed_file content goes through raw_dump → P1 extraction pipeline.
+ * This gives every project a strong "what and why" foundation.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -38,30 +44,28 @@ export async function POST(request: NextRequest) {
     const token = session.access_token;
 
     // Parse request - handle both JSON and FormData
-    let project_name: string;
+    // Two required fields: project_topic (what) + project_intent (why)
+    let project_topic: string;
     let project_intent: string;
-    let description: string | undefined;
     let seedFile: File | null = null;
 
     const contentType = request.headers.get('content-type') || '';
 
     if (contentType.includes('multipart/form-data')) {
       const formData = await request.formData();
-      project_name = formData.get('project_name') as string;
+      project_topic = formData.get('project_topic') as string;
       project_intent = formData.get('project_intent') as string;
-      description = formData.get('description') as string | undefined;
       seedFile = formData.get('seed_file') as File | null;
     } else {
       const body = await request.json();
-      project_name = body.project_name;
+      project_topic = body.project_topic;
       project_intent = body.project_intent;
-      description = body.description;
     }
 
     // Validate required fields
-    if (!project_name?.trim()) {
+    if (!project_topic?.trim()) {
       return NextResponse.json(
-        { detail: 'Project name is required' },
+        { detail: 'Project topic is required' },
         { status: 400 }
       );
     }
@@ -73,16 +77,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Forward to work-platform backend with intent
-    // Backend will create the intent block directly (no LLM needed)
+    // Forward to work-platform backend with topic + intent
+    // Backend will create TWO anchor blocks directly (no LLM needed):
+    // 1. Topic block (anchor_role: 'topic') from project_topic
+    // 2. Vision block (anchor_role: 'vision') from project_intent
+    // NOTE: No initial_context/raw_dump - these become direct anchor blocks
     const backendPayload = {
-      project_name: project_name.trim(),
+      project_name: project_topic.trim(),  // Topic becomes project name
+      project_topic: project_topic.trim(), // Explicit topic for anchor block
       project_intent: project_intent.trim(),
-      initial_context: project_intent.trim(), // Use intent as initial context for dump
-      description: description?.trim() || undefined,
     };
 
-    console.log(`[CREATE PROJECT API] Creating project: ${project_name.trim()}`);
+    console.log(`[CREATE PROJECT API] Creating project: ${project_topic.trim()}`);
 
     // Send both Authorization AND sb-access-token headers (per AUTH_CANON.md line 7-9)
     const backendResponse = await fetch(`${WORK_PLATFORM_API_URL}/api/projects/new`, {
@@ -106,7 +112,8 @@ export async function POST(request: NextRequest) {
     const result = await backendResponse.json();
     console.log(`[CREATE PROJECT API] Project created: ${result.project_id}, basket: ${result.basket_id}`);
 
-    // If seed_file provided, upload to reference_assets and trigger anchor seeding
+    // If seed_file provided, upload to reference_assets and trigger P1 extraction
+    // This is the ONLY path that creates raw_dumps - seed files go through governance
     if (seedFile && seedFile.size > 0 && result.basket_id) {
       console.log(`[CREATE PROJECT API] Processing seed file: ${seedFile.name} (${seedFile.size} bytes)`);
 
@@ -143,7 +150,7 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify({
               asset_id: uploadResult.asset_id || uploadResult.id,
-              project_name: project_name.trim(),
+              project_name: project_topic.trim(),
             }),
           }).then(res => {
             if (res.ok) {

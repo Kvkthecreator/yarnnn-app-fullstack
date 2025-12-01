@@ -36,28 +36,38 @@ logger = logging.getLogger(__name__)
 
 
 class CreateProjectRequest(BaseModel):
-    """Request to create new project (NEW user onboarding)."""
+    """Request to create new project (NEW user onboarding).
+
+    Creates TWO foundational anchor blocks:
+    - Topic block (anchor_role: 'topic') - WHAT you're working on
+    - Vision block (anchor_role: 'vision') - WHY you're working on it
+    """
 
     project_name: str = Field(
         ...,
-        description="Project name",
+        description="Project name (used for display, often same as topic)",
         min_length=1,
+        max_length=200,
+    )
+    project_topic: Optional[str] = Field(
+        None,
+        description="WHAT - Topic/brand/subject (creates topic anchor block). Falls back to project_name if not provided.",
         max_length=200,
     )
     project_intent: str = Field(
         ...,
-        description="One-sentence project intent/goal (required, creates foundational intent block)",
+        description="WHY - Project intent/vision (required, creates vision anchor block)",
         min_length=1,
         max_length=500,
     )
     initial_context: str = Field(
         default="",
-        description="Initial context/notes to seed project (optional if files are provided)",
+        description="Initial context/notes from seed file (optional, triggers P1 extraction)",
         max_length=50000,
     )
     description: Optional[str] = Field(
         None,
-        description="Optional project description",
+        description="Optional project description for display",
         max_length=1000,
     )
 
@@ -69,7 +79,8 @@ class ProjectResponse(BaseModel):
     project_name: str
     basket_id: str
     dump_id: Optional[str] = None  # Optional - only created if initial_context provided
-    intent_block_id: Optional[str] = None  # Foundational intent block
+    topic_block_id: Optional[str] = None  # WHAT anchor block
+    vision_block_id: Optional[str] = None  # WHY anchor block
     agent_session_ids: dict[str, str]  # Changed from agent_ids: list[str] to match scaffolder
     work_request_id: str
     status: str
@@ -154,6 +165,7 @@ async def create_project(
             workspace_id=workspace_id,
             project_name=request.project_name,
             project_intent=request.project_intent,
+            project_topic=request.project_topic,
             initial_context=request.initial_context,
             description=request.description,
         )

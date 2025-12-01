@@ -41,23 +41,27 @@ from fastapi import HTTPException, status
 logger = logging.getLogger(__name__)
 
 
-async def create_intent_block(
+async def create_anchor_block(
     basket_id: str,
     workspace_id: str,
-    intent_content: str,
-    project_name: str,
+    title: str,
+    content: str,
+    semantic_type: str,
+    anchor_role: str,
 ) -> Optional[str]:
     """
-    Create a foundational intent block directly in the blocks table.
+    Create a foundational anchor block directly in the blocks table.
 
     This is a guaranteed block created during project scaffolding - no LLM needed.
-    The intent block serves as the foundational context for all agent work.
+    Anchor blocks serve as foundational context for all agent work.
 
     Args:
         basket_id: Target basket UUID
         workspace_id: Workspace UUID
-        intent_content: User's project intent (one sentence)
-        project_name: Project name for context
+        title: Block title
+        content: Block content
+        semantic_type: Semantic type (e.g., 'context', 'intent')
+        anchor_role: Anchor role (e.g., 'topic', 'vision')
 
     Returns:
         Block ID if created, None if failed
@@ -69,10 +73,10 @@ async def create_intent_block(
             "id": block_id,
             "basket_id": basket_id,
             "workspace_id": workspace_id,
-            "title": f"Project Intent: {project_name}",
-            "content": intent_content,
-            "semantic_type": "intent",
-            "anchor_role": "intent",
+            "title": title,
+            "content": content,
+            "semantic_type": semantic_type,
+            "anchor_role": anchor_role,
             "anchor_status": "accepted",
             "anchor_confidence": 1.0,  # User-provided, highest confidence
             "state": "ACCEPTED",  # Skip PROPOSED since user explicitly provided
@@ -81,6 +85,7 @@ async def create_intent_block(
                 "source": "project_scaffolder",
                 "created_during": "project_onboarding",
                 "is_foundational": True,
+                "anchor_role": anchor_role,
             },
         }
 
@@ -92,17 +97,17 @@ async def create_intent_block(
 
         if result.data:
             logger.info(
-                f"[PROJECT SCAFFOLDING] Created intent block {block_id} for basket {basket_id}"
+                f"[PROJECT SCAFFOLDING] Created {anchor_role} anchor block {block_id} for basket {basket_id}"
             )
             return block_id
         else:
             logger.warning(
-                f"[PROJECT SCAFFOLDING] Intent block creation returned no data for basket {basket_id}"
+                f"[PROJECT SCAFFOLDING] {anchor_role} block creation returned no data for basket {basket_id}"
             )
             return None
 
     except Exception as e:
-        logger.error(f"[PROJECT SCAFFOLDING] Failed to create intent block: {e}")
+        logger.error(f"[PROJECT SCAFFOLDING] Failed to create {anchor_role} block: {e}")
         # Don't fail project creation if block creation fails
         return None
 
@@ -133,6 +138,7 @@ async def scaffold_new_project(
     workspace_id: str,
     project_name: str,
     project_intent: str,
+    project_topic: Optional[str] = None,
     initial_context: str = "",
     description: Optional[str] = None,
 ) -> dict:
@@ -144,8 +150,10 @@ async def scaffold_new_project(
     Flow:
     1. Check permissions (trial/subscription)
     2. Create basket (substrate-api) with origin_template='project_onboarding'
-    3. Create intent block (foundational anchor) from project_intent
-    4. Create raw_dump (substrate-api) with initial context (if provided)
+    3. Create TWO foundational anchor blocks:
+       - Topic block (anchor_role: 'topic') - WHAT you're working on
+       - Vision block (anchor_role: 'vision') - WHY you're working on it
+    4. Create raw_dump (substrate-api) with initial context (if provided, typically from seed file)
     5. Create project (work-platform DB) linking to basket
     6. Pre-scaffold ALL agent sessions (TP + research + content + reporting)
     7. Record work_request (for trial tracking with research agent)
@@ -153,9 +161,10 @@ async def scaffold_new_project(
     Args:
         user_id: User ID from JWT
         workspace_id: Workspace ID for context
-        project_name: User-provided project name
-        project_intent: One-sentence project intent (required, creates foundational intent block)
-        initial_context: Initial context/notes to seed project (optional)
+        project_name: User-provided project name (often same as topic)
+        project_intent: WHY - project intent/vision (required, creates vision anchor block)
+        project_topic: WHAT - topic/brand/subject (optional, creates topic anchor block)
+        initial_context: Initial context/notes to seed project (optional, from seed file)
         description: Optional project description
 
     Returns:
@@ -164,7 +173,8 @@ async def scaffold_new_project(
             "project_name": "...",
             "basket_id": "...",
             "dump_id": "...",
-            "intent_block_id": "...",
+            "topic_block_id": "...",
+            "vision_block_id": "...",
             "agent_session_ids": {
                 "thinking_partner": "...",
                 "research": "...",
@@ -190,7 +200,8 @@ async def scaffold_new_project(
     basket_id = None
     dump_id = None
     project_id = None
-    intent_block_id = None
+    topic_block_id = None
+    vision_block_id = None
     agent_session_ids = {}
     work_request_id = None
 
@@ -250,30 +261,58 @@ async def scaffold_new_project(
             )
 
         # ================================================================
-        # Step 3: Create Intent Block (foundational anchor - guaranteed)
+        # Step 3: Create TWO Foundational Anchor Blocks (guaranteed)
+        # - Topic block (anchor_role: 'topic') - WHAT you're working on
+        # - Vision block (anchor_role: 'vision') - WHY you're working on it
         # ================================================================
         try:
+            # 3a: Create Topic block (WHAT)
+            # Use project_topic if provided, otherwise fall back to project_name
+            topic_content = project_topic or project_name
             logger.debug(
-                f"[PROJECT SCAFFOLDING] Creating intent block for basket {basket_id}"
+                f"[PROJECT SCAFFOLDING] Creating topic anchor block for basket {basket_id}"
             )
-            intent_block_id = await create_intent_block(
+            topic_block_id = await create_anchor_block(
                 basket_id=basket_id,
                 workspace_id=workspace_id,
-                intent_content=project_intent,
-                project_name=project_name,
+                title=f"Topic: {topic_content}",
+                content=topic_content,
+                semantic_type="context",
+                anchor_role="topic",
             )
-            if intent_block_id:
+            if topic_block_id:
                 logger.info(
-                    f"[PROJECT SCAFFOLDING] Created intent block {intent_block_id}"
+                    f"[PROJECT SCAFFOLDING] Created topic block {topic_block_id}"
                 )
             else:
                 logger.warning(
-                    f"[PROJECT SCAFFOLDING] Intent block creation returned None (non-fatal)"
+                    f"[PROJECT SCAFFOLDING] Topic block creation returned None (non-fatal)"
+                )
+
+            # 3b: Create Vision block (WHY)
+            logger.debug(
+                f"[PROJECT SCAFFOLDING] Creating vision anchor block for basket {basket_id}"
+            )
+            vision_block_id = await create_anchor_block(
+                basket_id=basket_id,
+                workspace_id=workspace_id,
+                title=f"Vision: {project_name}",
+                content=project_intent,
+                semantic_type="intent",
+                anchor_role="vision",
+            )
+            if vision_block_id:
+                logger.info(
+                    f"[PROJECT SCAFFOLDING] Created vision block {vision_block_id}"
+                )
+            else:
+                logger.warning(
+                    f"[PROJECT SCAFFOLDING] Vision block creation returned None (non-fatal)"
                 )
 
         except Exception as e:
-            # Log but don't fail - intent block is important but not critical
-            logger.warning(f"[PROJECT SCAFFOLDING] Intent block creation failed: {e}")
+            # Log but don't fail - anchor blocks are important but not critical
+            logger.warning(f"[PROJECT SCAFFOLDING] Anchor block creation failed: {e}")
 
         # ================================================================
         # Step 4: Create Raw Dump (substrate-api via HTTP) - Optional
@@ -326,7 +365,9 @@ async def scaffold_new_project(
             "onboarded_at": datetime.utcnow().isoformat(),
             "metadata": {
                 "dump_id": dump_id,
-                "intent_block_id": intent_block_id,
+                "topic_block_id": topic_block_id,
+                "vision_block_id": vision_block_id,
+                "project_topic": project_topic or project_name,
                 "project_intent": project_intent,
                 "initial_context_length": len(initial_context) if initial_context else 0,
                 "auto_scaffolded_sessions": ["thinking_partner", "research", "content", "reporting"],
@@ -433,8 +474,10 @@ async def scaffold_new_project(
         request_payload = {
             "project_id": project_id,
             "project_name": project_name,
+            "project_topic": project_topic or project_name,
             "project_intent": project_intent,
-            "intent_block_id": intent_block_id,
+            "topic_block_id": topic_block_id,
+            "vision_block_id": vision_block_id,
             "scaffolding_timestamp": "now()",
             "dump_id": dump_id,
         }
@@ -473,7 +516,8 @@ async def scaffold_new_project(
         # ================================================================
         logger.info(
             f"[PROJECT SCAFFOLDING] ✅ SUCCESS: project={project_id}, "
-            f"basket={basket_id}, intent_block={intent_block_id}, sessions={len(agent_session_ids)}, work_request={work_request_id}"
+            f"basket={basket_id}, topic_block={topic_block_id}, vision_block={vision_block_id}, "
+            f"sessions={len(agent_session_ids)}, work_request={work_request_id}"
         )
 
         return {
@@ -481,7 +525,8 @@ async def scaffold_new_project(
             "project_name": project_name,
             "basket_id": basket_id,
             "dump_id": dump_id,
-            "intent_block_id": intent_block_id,
+            "topic_block_id": topic_block_id,
+            "vision_block_id": vision_block_id,
             "agent_session_ids": agent_session_ids,
             "work_request_id": work_request_id,
             "status": "active",

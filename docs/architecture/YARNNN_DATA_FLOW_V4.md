@@ -1,11 +1,11 @@
-# YARNNN Data Flow v4.2
+# YARNNN Data Flow v4.3
 
 **Complete Work Flow with Separated Governance**
 
-**Version**: 4.2
+**Version**: 4.3
 **Date**: 2025-12-01
 **Status**: ✅ Canonical
-**Supersedes**: v4.1 (added direct block CRUD)
+**Supersedes**: v4.2 (streamlined project creation with two anchor blocks)
 
 ---
 
@@ -23,29 +23,42 @@ This document traces complete data flows through YARNNN's two-layer architecture
 
 ## 📋 Complete Work Session Flow
 
-### Phase 1: Project Creation
+### Phase 1: Project Creation (with Two Anchor Blocks)
+
+Every new project is created with TWO foundational anchor blocks that establish the "what and why":
 
 ```
 User Action: Create new project
+  Form collects: Topic (what) + Intent (why)
   ↓
-POST /api/projects/new (work-platform)
+POST /api/projects/new (work-platform BFF)
+  body: {project_topic, project_intent}
   ↓
 work-platform → substrate-API: POST /api/baskets
   ↓
 Basket created (substrate-API DB)
   ↓
-work-platform → substrate-API: POST /api/dumps/new
+work-platform: INSERT INTO blocks (Topic anchor block)
+  anchor_role: 'topic', semantic_type: 'context'
+  state: ACCEPTED, confidence: 1.0
   ↓
-raw_dump created (initial context)
+work-platform: INSERT INTO blocks (Vision anchor block)
+  anchor_role: 'vision', semantic_type: 'intent'
+  state: ACCEPTED, confidence: 1.0
   ↓
 work-platform DB: INSERT INTO projects
   ↓
-Response: {project_id, basket_id, dump_id}
+Response: {project_id, basket_id, topic_block_id, vision_block_id}
 ```
+
+**Key Points**:
+- **No raw_dump** created from topic/intent (direct blocks, no P1 extraction)
+- **Two guaranteed anchors**: Topic (what) + Vision (why)
+- Seed file upload (optional) → creates raw_dump → P1 extraction for additional blocks
 
 **Tables Modified**:
 - `baskets` (substrate-API)
-- `raw_dumps` (substrate-API)
+- `blocks` (substrate-API - two anchor blocks)
 - `projects` (work-platform)
 
 ---
@@ -274,7 +287,13 @@ Block created
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ User creates project                                      │
+│ User creates project (Topic + Intent)                    │
+└────────────┬─────────────────────────────────────────────┘
+             ↓
+┌──────────────────────────────────────────────────────────┐
+│ TWO ANCHOR BLOCKS created automatically:                 │
+│ → Topic block (anchor_role: 'topic') - WHAT              │
+│ → Vision block (anchor_role: 'vision') - WHY             │
 └────────────┬─────────────────────────────────────────────┘
              ↓
 ┌──────────────────────────────────────────────────────────┐
@@ -282,7 +301,7 @@ Block created
 └────────────┬─────────────────────────────────────────────┘
              ↓
 ┌──────────────────────────────────────────────────────────┐
-│ substrate-API: baskets, raw_dumps                        │
+│ substrate-API: baskets, blocks (with anchors)            │
 └────────────┬───────────────────────┬────────────────────┘
              ↓                       ↓
 ┌────────────────────────┐  ┌───────────────────────────────┐
@@ -310,9 +329,10 @@ Block created
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Two Paths to Blocks**:
-1. **User-authored** (Direct): User → Block CRUD → ACCEPTED (trusted, immediate)
-2. **Agent-generated** (Governed): Agent → work_output → [future] proposal → governance → ACCEPTED
+**Three Paths to Blocks**:
+1. **Project scaffolding** (Automatic): Project creation → Topic + Vision anchor blocks → ACCEPTED (trusted, immediate)
+2. **User-authored** (Direct): User → Block CRUD on Context page → ACCEPTED (trusted, immediate)
+3. **Agent-generated** (Governed): Agent → work_output → [future] proposal → governance → ACCEPTED
 
 ---
 
@@ -356,4 +376,4 @@ Block created
 
 ---
 
-**Two layers. Separated governance. Direct user control. Clear data flows. This is YARNNN v4.2.**
+**Two layers. Separated governance. Direct user control. Strong foundations (Topic + Vision). This is YARNNN v4.3.**

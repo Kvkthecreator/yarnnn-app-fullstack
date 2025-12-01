@@ -28,9 +28,10 @@ interface CreateProjectDialogProps {
 export default function CreateProjectDialog({ open, onOpenChange }: CreateProjectDialogProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [projectName, setProjectName] = useState('');
+  // Topic: What are you working on? (becomes anchor_role: 'topic')
+  const [projectTopic, setProjectTopic] = useState('');
+  // Intent: Why are you working on it? (becomes anchor_role: 'vision')
   const [projectIntent, setProjectIntent] = useState('');
-  const [description, setDescription] = useState('');
   const [seedFile, setSeedFile] = useState<File | null>(null);
   const [showSeedUpload, setShowSeedUpload] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -38,13 +39,12 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
   const [success, setSuccess] = useState(false);
 
   const canSubmit = useMemo(() => {
-    return projectName.trim().length > 0 && projectIntent.trim().length > 0;
-  }, [projectName, projectIntent]);
+    return projectTopic.trim().length > 0 && projectIntent.trim().length > 0;
+  }, [projectTopic, projectIntent]);
 
   const resetState = () => {
-    setProjectName('');
+    setProjectTopic('');
     setProjectIntent('');
-    setDescription('');
     setSeedFile(null);
     setShowSeedUpload(false);
     setDragOver(false);
@@ -117,15 +117,14 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
 
     try {
       // Use FormData if we have a file, otherwise JSON
+      // Backend expects: project_topic (what) + project_intent (why)
+      // These create two anchor blocks: topic + vision
       let response: Response;
 
       if (seedFile) {
         const formData = new FormData();
-        formData.append('project_name', projectName.trim());
+        formData.append('project_topic', projectTopic.trim());
         formData.append('project_intent', projectIntent.trim());
-        if (description.trim()) {
-          formData.append('description', description.trim());
-        }
         formData.append('seed_file', seedFile);
 
         response = await fetch('/api/projects/new', {
@@ -139,9 +138,8 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            project_name: projectName.trim(),
+            project_topic: projectTopic.trim(),
             project_intent: projectIntent.trim(),
-            description: description.trim() || undefined,
           }),
         });
       }
@@ -172,41 +170,32 @@ export default function CreateProjectDialog({ open, onOpenChange }: CreateProjec
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Create New Project</DialogTitle>
+          <DialogTitle>What are you working on?</DialogTitle>
           <DialogDescription>
-            Create a project workspace. You'll set up foundational context on the next screen.
+            Tell us the what and why. These become your project's foundational context.
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-6">
           <section className="flex flex-col gap-4">
-            <FieldBlock label="Project Name" required>
+            <FieldBlock label="Topic or Brand" required hint="The subject, product, or area of focus">
               <Input
-                placeholder="e.g., Healthcare AI Research"
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="e.g., RadAssist, Climate Dashboard, My Startup"
+                value={projectTopic}
+                onChange={(e) => setProjectTopic(e.target.value)}
                 autoFocus
                 maxLength={200}
               />
             </FieldBlock>
 
-            <FieldBlock label="What are you trying to achieve?" required hint="One sentence describing your goal">
-              <Input
-                placeholder="e.g., Build a diagnostic tool for radiologists"
+            <FieldBlock label="Intent" required hint="Why this matters or what you're trying to achieve">
+              <Textarea
+                placeholder="e.g., Build an AI tool that helps radiologists detect early-stage cancers faster and more accurately"
                 value={projectIntent}
                 onChange={(e) => setProjectIntent(e.target.value)}
-                maxLength={300}
-              />
-            </FieldBlock>
-
-            <FieldBlock label="Description" hint="Optional · Brief summary visible on project cards">
-              <Textarea
-                placeholder="What is this project about?"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
                 rows={2}
-                className="resize-none"
-                maxLength={1000}
+                className="resize-y min-h-[60px]"
+                maxLength={500}
               />
             </FieldBlock>
 
