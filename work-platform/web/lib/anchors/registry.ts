@@ -1,15 +1,48 @@
+/**
+ * Context Roles Registry
+ *
+ * Provides functions for querying blocks with context roles (anchor_role).
+ * Context roles indicate strategic significance of blocks within a basket.
+ *
+ * Canon Reference: /docs/canon/CONTEXT_ROLES_ARCHITECTURE.md
+ *
+ * Foundation roles: problem, customer, vision, solution, feature, constraint, metric, insight
+ * Insight roles: trend_digest, competitor_snapshot, market_signal, brand_voice, strategic_direction, customer_insight
+ */
+
 import { SupabaseClient } from '@supabase/supabase-js';
-import type { AnchorStatusSummary, BasketAnchorRecord, AnchorExpectedType, AnchorScope } from './types';
+import type { AnchorStatusSummary, AnchorExpectedType, AnchorScope } from './types';
 
 const MAX_ANCHOR_STALE_DAYS = 21;
 const APPROVED_BLOCK_STATES = new Set(['ACCEPTED', 'LOCKED', 'CONSTANT']);
-const APPROVED_CONTEXT_STATES = new Set(['ACTIVE']);
 
-function computeIsStale(updatedAt?: string | null): boolean {
+/**
+ * Foundation roles that every project should ideally have.
+ */
+export const FOUNDATION_ROLES = ['problem', 'customer', 'vision'] as const;
+
+/**
+ * All valid context roles.
+ */
+export const ALL_CONTEXT_ROLES = [
+  // Foundation
+  'problem', 'customer', 'solution', 'feature',
+  'constraint', 'metric', 'insight', 'vision',
+  // Insight (agent-producible, refreshable)
+  'trend_digest', 'competitor_snapshot', 'market_signal',
+  'brand_voice', 'strategic_direction', 'customer_insight',
+] as const;
+
+export type ContextRole = typeof ALL_CONTEXT_ROLES[number];
+
+function computeIsStale(updatedAt?: string | null, ttlHours?: number | null): boolean {
   if (!updatedAt) return true;
   const updatedTs = new Date(updatedAt).getTime();
   if (Number.isNaN(updatedTs)) return true;
-  const staleThreshold = Date.now() - MAX_ANCHOR_STALE_DAYS * 24 * 60 * 60 * 1000;
+
+  // Use TTL from refresh_policy if available, otherwise default
+  const staleDays = ttlHours ? ttlHours / 24 : MAX_ANCHOR_STALE_DAYS;
+  const staleThreshold = Date.now() - staleDays * 24 * 60 * 60 * 1000;
   return updatedTs < staleThreshold;
 }
 
@@ -24,46 +57,6 @@ function anchorScopeOrder(scope: AnchorScope): number {
   }
 }
 
-async function loadRegistry(
-  supabase: SupabaseClient,
-  basketId: string
-): Promise<BasketAnchorRecord[]> {
-  // Phase A: Load anchors from substrate metadata (anchor_role, anchor_status, anchor_confidence)
-  // Query both blocks and context_items for anchored substrate
-
-  const { data: anchoredSubstrate, error } = await supabase
-    .from('anchored_substrate')
-    .select('*')
-    .eq('basket_id', basketId)
-    .eq('anchor_status', 'accepted') // Only load accepted anchors
-    .order('created_at', { ascending: true });
-
-  if (error) {
-    throw new Error(`Failed to load anchor registry: ${error.message}`);
-  }
-
-  // Transform anchored substrate to BasketAnchorRecord format
-  // This maintains compatibility with existing code while using new schema
-  return (anchoredSubstrate || []).map((item, index) => ({
-    id: item.substrate_id,
-    basket_id: basketId,
-    anchor_key: item.anchor_role, // role becomes the key
-    label: item.title || item.anchor_role,
-    scope: 'core', // Default scope (can be inferred from metadata if needed)
-    expected_type: item.substrate_type as 'block' | 'context_item',
-    required: false, // Advisory only (Phase A change)
-    description: null,
-    ordering: index,
-    linked_substrate_id: item.substrate_id,
-    status: 'active',
-    metadata: item.metadata || {},
-    last_refreshed_at: item.updated_at,
-    last_relationship_count: 0,
-    created_at: item.created_at,
-    updated_at: item.updated_at,
-  })) as BasketAnchorRecord[];
-}
-
 function summariseContent(body?: string | null, content?: string | null): string | null {
   const source = body ?? content ?? null;
   if (!source) return null;
@@ -73,134 +66,121 @@ function summariseContent(body?: string | null, content?: string | null): string
   return `${trimmed.slice(0, 277)}…`;
 }
 
-interface SubstrateMaps {
-  blocks: Map<string, any>;
-  contextItems: Map<string, any>;
-  relationshipCounts: Map<string, number>;
+interface BlockWithRole {
+  id: string;
+  basket_id: string;
+  title: string | null;
+  body_md: string | null;
+  content: string | null;
+  metadata: Record<string, unknown> | null;
+  semantic_type: string | null;
+  state: string | null;
+  status: string | null;
+  updated_at: string | null;
+  created_at: string | null;
+  anchor_role: string;
+  anchor_status: string | null;
+  anchor_confidence: number | null;
+  refresh_policy: { ttl_hours?: number; source_recipe?: string; auto_refresh?: boolean } | null;
 }
 
-async function buildSubstrateMaps(
+/**
+ * Load all blocks with context roles from a basket.
+ */
+async function loadContextRoleBlocks(
+  supabase: SupabaseClient,
+  basketId: string
+): Promise<BlockWithRole[]> {
+  const { data, error } = await supabase
+    .from('blocks')
+    .select('id, basket_id, title, body_md, content, metadata, semantic_type, state, status, updated_at, created_at, anchor_role, anchor_status, anchor_confidence, refresh_policy')
+    .eq('basket_id', basketId)
+    .not('anchor_role', 'is', null)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to load context role blocks: ${error.message}`);
+  }
+
+  return (data || []) as BlockWithRole[];
+}
+
+/**
+ * Build relationship count map for given block IDs.
+ */
+async function buildRelationshipCounts(
   supabase: SupabaseClient,
   basketId: string,
-  anchors: BasketAnchorRecord[],
-  anchorKeys: string[]
-): Promise<SubstrateMaps> {
-  const linkedIds = anchors
-    .map(anchor => anchor.linked_substrate_id)
-    .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  blockIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (blockIds.length === 0) return counts;
 
-  const anchorRoles = anchorKeys.filter(key => true); // anchor roles to query
+  const [fromRes, toRes] = await Promise.all([
+    supabase
+      .from('substrate_relationships')
+      .select('from_id')
+      .eq('basket_id', basketId)
+      .in('from_id', blockIds),
+    supabase
+      .from('substrate_relationships')
+      .select('to_id')
+      .eq('basket_id', basketId)
+      .in('to_id', blockIds),
+  ]);
 
-  // Phase A: Query substrate by anchor_role (not metadata->anchor_id)
-  // V3.0: Only query blocks table (context_items sunset)
-  const blockQuery = supabase
-    .from('blocks')
-    .select('id, title, body_md, content, metadata, semantic_type, state, status, updated_at, created_at, anchor_role')
-    .eq('basket_id', basketId)
-    .in('anchor_role', anchorRoles);
-
-  const blockRes = await blockQuery;
-
-  if (blockRes.error) {
-    throw new Error(`Failed to load anchor blocks: ${blockRes.error.message}`);
+  if (fromRes.error) {
+    throw new Error(`Failed to load relationship counts: ${fromRes.error.message}`);
+  }
+  if (toRes.error) {
+    throw new Error(`Failed to load relationship counts: ${toRes.error.message}`);
   }
 
-  // Phase A: Use anchor_role as key (not metadata.anchor_id)
-  const blockMap = new Map<string, any>();
-  for (const row of blockRes.data ?? []) {
-    blockMap.set(row.id, row);
-    // Map by anchor_role for lookups by role
-    if (row.anchor_role && !blockMap.has(row.anchor_role)) {
-      blockMap.set(row.anchor_role, row);
-    }
+  for (const row of fromRes.data ?? []) {
+    const id = row.from_id as string;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  for (const row of toRes.data ?? []) {
+    const id = row.to_id as string;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
   }
 
-  // V3.0: No context_items map (table sunset)
-  const contextMap = new Map<string, any>();
-
-  const substrateIds = [...new Set([
-    ...linkedIds,
-    ...Array.from(blockMap.values()).map(row => row.id as string),
-    ...Array.from(contextMap.values()).map(row => row.id as string),
-  ])];
-
-  const relationshipCounts = new Map<string, number>();
-
-  if (substrateIds.length) {
-    const [fromRes, toRes] = await Promise.all([
-      supabase
-        .from('substrate_relationships')
-        .select('from_id')
-        .eq('basket_id', basketId)
-        .in('from_id', substrateIds),
-      supabase
-        .from('substrate_relationships')
-        .select('to_id')
-        .eq('basket_id', basketId)
-        .in('to_id', substrateIds),
-    ]);
-
-    if (fromRes.error) {
-      throw new Error(`Failed to load relationship counts: ${fromRes.error.message}`);
-    }
-    if (toRes.error) {
-      throw new Error(`Failed to load relationship counts: ${toRes.error.message}`);
-    }
-
-    for (const row of fromRes.data ?? []) {
-      const id = row.from_id as string;
-      relationshipCounts.set(id, (relationshipCounts.get(id) ?? 0) + 1);
-    }
-    for (const row of toRes.data ?? []) {
-      const id = row.to_id as string;
-      relationshipCounts.set(id, (relationshipCounts.get(id) ?? 0) + 1);
-    }
-  }
-
-  return {
-    blocks: blockMap,
-    contextItems: contextMap,
-    relationshipCounts,
-  };
+  return counts;
 }
 
+/**
+ * Derive lifecycle status from block state and staleness.
+ */
 function deriveLifecycle(
-  anchor: BasketAnchorRecord,
-  expectedType: AnchorExpectedType,
-  substrate: any | null
-): { lifecycle: AnchorStatusSummary['lifecycle']; isStale: boolean; lastUpdatedAt?: string | null } {
-  if (anchor.status === 'archived') {
-    return { lifecycle: 'archived', isStale: false, lastUpdatedAt: substrate?.updated_at ?? null };
+  block: BlockWithRole
+): { lifecycle: AnchorStatusSummary['lifecycle']; isStale: boolean } {
+  const state = (block.state ?? '').toUpperCase();
+
+  // Check if approved state
+  if (!APPROVED_BLOCK_STATES.has(state)) {
+    return { lifecycle: 'draft', isStale: false };
   }
 
-  if (!substrate) {
-    return { lifecycle: 'missing', isStale: false };
-  }
+  // Check staleness using refresh_policy TTL if available
+  const ttlHours = block.refresh_policy?.ttl_hours;
+  const stale = computeIsStale(block.updated_at, ttlHours);
 
-  if (expectedType === 'block') {
-    const state = (substrate.state ?? '').toUpperCase();
-    if (!APPROVED_BLOCK_STATES.has(state)) {
-      return { lifecycle: 'draft', isStale: false, lastUpdatedAt: substrate.updated_at };
-    }
-  } else {
-    const state = (substrate.state ?? '').toUpperCase();
-    if (!APPROVED_CONTEXT_STATES.has(state)) {
-      return { lifecycle: 'draft', isStale: false, lastUpdatedAt: substrate.updated_at };
-    }
-  }
-
-  const stale = computeIsStale(substrate.updated_at ?? anchor.last_refreshed_at ?? anchor.updated_at);
   return {
     lifecycle: stale ? 'stale' : 'approved',
     isStale: stale,
-    lastUpdatedAt: substrate.updated_at ?? anchor.last_refreshed_at ?? anchor.updated_at,
   };
 }
 
+/**
+ * List all context roles with their status for a basket.
+ *
+ * This is the main function used by the UI to show context readiness.
+ */
 export async function listAnchorsWithStatus(
   supabase: SupabaseClient,
   basketId: string
 ): Promise<AnchorStatusSummary[]> {
+  // Verify basket exists
   const { data: basketRow, error: basketError } = await supabase
     .from('baskets')
     .select('id')
@@ -211,185 +191,150 @@ export async function listAnchorsWithStatus(
     throw new Error(`Basket not found: ${basketError?.message || basketId}`);
   }
 
-  const registry = await loadRegistry(supabase, basketId);
-  const anchorKeys = registry.map(anchor => anchor.anchor_key);
+  // Load blocks with context roles
+  const blocks = await loadContextRoleBlocks(supabase, basketId);
+  const blockIds = blocks.map(b => b.id);
 
-  const { blocks, contextItems, relationshipCounts } = await buildSubstrateMaps(supabase, basketId, registry, anchorKeys);
+  // Get relationship counts
+  const relationshipCounts = await buildRelationshipCounts(supabase, basketId, blockIds);
 
-  const summaries: AnchorStatusSummary[] = registry
-    .map((anchor) => {
-      const expectedType = anchor.expected_type as AnchorExpectedType;
-      const substrate = (() => {
-        if (anchor.linked_substrate_id) {
-          if (expectedType === 'block') {
-            return blocks.get(anchor.linked_substrate_id) || blocks.get(anchor.anchor_key) || null;
-          }
-          return contextItems.get(anchor.linked_substrate_id) || contextItems.get(anchor.anchor_key) || null;
-        }
-        if (expectedType === 'block') {
-          return blocks.get(anchor.anchor_key) || null;
-        }
-        return contextItems.get(anchor.anchor_key) || null;
-      })();
+  // Transform to AnchorStatusSummary format
+  const summaries: AnchorStatusSummary[] = blocks.map((block, index) => {
+    const { lifecycle, isStale } = deriveLifecycle(block);
 
-      const { lifecycle, isStale, lastUpdatedAt } = deriveLifecycle(anchor, expectedType, substrate);
-
-      const substrateSummary = substrate
-        ? {
-            id: substrate.id,
-            type: expectedType,
-            title: substrate.title || anchor.label,
-            content_snippet: summariseContent(substrate.body_md, substrate.content),
-            semantic_type: (substrate.semantic_type ?? substrate.type ?? substrate.metadata?.semantic_type) || null,
-            state: substrate.state ?? null,
-            status: substrate.status ?? null,
-            updated_at: substrate.updated_at ?? null,
-            created_at: substrate.created_at ?? null,
-            metadata: substrate.metadata ?? null,
-          }
-        : null;
-
-      const relCount = substrateSummary?.id
-        ? (relationshipCounts.get(substrateSummary.id) ?? anchor.last_relationship_count ?? 0)
-        : anchor.last_relationship_count ?? 0;
-
-      return {
-        anchor_key: anchor.anchor_key,
-        scope: anchor.scope,
-        expected_type: expectedType,
-        label: anchor.label,
-        required: anchor.required,
-        description: anchor.description,
-        ordering: anchor.ordering ?? undefined,
-        lifecycle,
-        is_stale: isStale,
-        linked_substrate: substrateSummary,
-        relationships: relCount,
-        last_refreshed_at: anchor.last_refreshed_at ?? null,
-        last_updated_at: lastUpdatedAt ?? null,
-        last_relationship_count: anchor.last_relationship_count ?? 0,
-        registry_id: anchor.id,
-        metadata: anchor.metadata ?? {},
-      } satisfies AnchorStatusSummary;
-    })
-    .sort((a, b) => {
-      const scopeOrder = anchorScopeOrder(a.scope) - anchorScopeOrder(b.scope);
-      if (scopeOrder !== 0) return scopeOrder;
-      const orderingA = a.ordering ?? 0;
-      const orderingB = b.ordering ?? 0;
-      if (orderingA !== orderingB) return orderingA - orderingB;
-      return a.label.localeCompare(b.label);
-    });
-
-  return summaries;
-}
-
-export async function upsertAnchorRegistryRow(
-  supabase: SupabaseClient,
-  basketId: string,
-  anchorKey: string,
-  values: Partial<Omit<BasketAnchorRecord, 'basket_id' | 'anchor_key' | 'id'>>
-): Promise<void> {
-  const payload = {
-    ...values,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { error } = await supabase
-    .from('basket_anchors')
-    .update(payload)
-    .eq('basket_id', basketId)
-    .eq('anchor_key', anchorKey);
-
-  if (error) {
-    throw new Error(`Failed to update anchor registry: ${error.message}`);
-  }
-}
-
-export async function insertCustomAnchor(
-  supabase: SupabaseClient,
-  basketId: string,
-  anchorKey: string,
-  payload: {
-    label: string;
-    scope: AnchorScope;
-    expected_type: AnchorExpectedType;
-    description?: string | null;
-    required?: boolean;
-    metadata?: Record<string, any>;
-  }
-): Promise<void> {
-  const { error } = await supabase.from('basket_anchors').insert({
-    basket_id: basketId,
-    anchor_key: anchorKey,
-    label: payload.label,
-    scope: payload.scope,
-    expected_type: payload.expected_type,
-    description: payload.description ?? null,
-    required: payload.required ?? false,
-    metadata: payload.metadata ?? {},
-    ordering: 1000, // custom anchors appear after core/brain by default
+    return {
+      anchor_key: block.anchor_role,
+      scope: 'core' as AnchorScope, // All roles treated as core for now
+      expected_type: 'block' as AnchorExpectedType,
+      label: block.title || block.anchor_role,
+      required: false, // Roles are advisory, not required
+      description: null,
+      ordering: index,
+      lifecycle,
+      is_stale: isStale,
+      linked_substrate: {
+        id: block.id,
+        type: 'block' as AnchorExpectedType,
+        title: block.title || block.anchor_role,
+        content_snippet: summariseContent(block.body_md, block.content),
+        semantic_type: block.semantic_type,
+        state: block.state,
+        status: block.status,
+        updated_at: block.updated_at,
+        created_at: block.created_at,
+        metadata: block.metadata,
+      },
+      relationships: relationshipCounts.get(block.id) ?? 0,
+      last_refreshed_at: block.updated_at,
+      last_updated_at: block.updated_at,
+      last_relationship_count: relationshipCounts.get(block.id) ?? 0,
+      registry_id: block.id,
+      metadata: block.metadata ?? {},
+    };
   });
 
-  if (error) {
-    throw new Error(`Failed to create anchor: ${error.message}`);
-  }
+  // Sort by scope, then ordering, then label
+  return summaries.sort((a, b) => {
+    const scopeOrder = anchorScopeOrder(a.scope) - anchorScopeOrder(b.scope);
+    if (scopeOrder !== 0) return scopeOrder;
+    const orderingA = a.ordering ?? 0;
+    const orderingB = b.ordering ?? 0;
+    if (orderingA !== orderingB) return orderingA - orderingB;
+    return a.label.localeCompare(b.label);
+  });
 }
 
-export async function archiveAnchor(
+/**
+ * Check if a basket has all required foundation roles.
+ */
+export async function checkFoundationRolesComplete(
   supabase: SupabaseClient,
-  basketId: string,
-  anchorKey: string
-): Promise<void> {
-  const { error } = await supabase
-    .from('basket_anchors')
-    .update({ status: 'archived', linked_substrate_id: null })
-    .eq('basket_id', basketId)
-    .eq('anchor_key', anchorKey);
+  basketId: string
+): Promise<{ complete: boolean; missing: string[]; present: string[] }> {
+  const anchors = await listAnchorsWithStatus(supabase, basketId);
 
-  if (error) {
-    throw new Error(`Failed to archive anchor: ${error.message}`);
-  }
+  const approvedRoles = new Set(
+    anchors
+      .filter(a => a.lifecycle === 'approved')
+      .map(a => a.anchor_key)
+  );
+
+  const present = FOUNDATION_ROLES.filter(role => approvedRoles.has(role));
+  const missing = FOUNDATION_ROLES.filter(role => !approvedRoles.has(role));
+
+  return {
+    complete: missing.length === 0,
+    missing: [...missing],
+    present: [...present],
+  };
 }
 
-export async function getAnchorRecord(
+/**
+ * Get blocks that match specific context roles.
+ */
+export async function getBlocksByRoles(
   supabase: SupabaseClient,
   basketId: string,
-  anchorKey: string
-): Promise<BasketAnchorRecord | null> {
+  roles: string[]
+): Promise<BlockWithRole[]> {
   const { data, error } = await supabase
-    .from('basket_anchors')
-    .select('*')
+    .from('blocks')
+    .select('id, basket_id, title, body_md, content, metadata, semantic_type, state, status, updated_at, created_at, anchor_role, anchor_status, anchor_confidence, refresh_policy')
     .eq('basket_id', basketId)
-    .eq('anchor_key', anchorKey)
-    .maybeSingle();
+    .in('anchor_role', roles)
+    .eq('anchor_status', 'accepted')
+    .order('updated_at', { ascending: false });
 
   if (error) {
-    throw new Error(`Failed to load anchor ${anchorKey}: ${error.message}`);
+    throw new Error(`Failed to load blocks by roles: ${error.message}`);
   }
 
-  return data as BasketAnchorRecord | null;
+  return (data || []) as BlockWithRole[];
 }
 
-export async function linkAnchorToSubstrate(
+/**
+ * Check freshness of specific roles for recipe execution.
+ * Returns true if all roles are present and fresh.
+ */
+export async function checkRolesFreshness(
   supabase: SupabaseClient,
   basketId: string,
-  anchorKey: string,
-  substrateId: string,
-  relationshipCount: number | null
-): Promise<void> {
-  const { error } = await supabase
-    .from('basket_anchors')
-    .update({
-      linked_substrate_id: substrateId,
-      last_relationship_count: relationshipCount ?? 0,
-      last_refreshed_at: new Date().toISOString(),
-      status: 'active',
-    })
-    .eq('basket_id', basketId)
-    .eq('anchor_key', anchorKey);
-
-  if (error) {
-    throw new Error(`Failed to link anchor ${anchorKey}: ${error.message}`);
+  requiredRoles: string[]
+): Promise<{ fresh: boolean; staleRoles: string[]; missingRoles: string[] }> {
+  if (requiredRoles.length === 0) {
+    return { fresh: true, staleRoles: [], missingRoles: [] };
   }
+
+  const blocks = await getBlocksByRoles(supabase, basketId, requiredRoles);
+  const roleToBlock = new Map<string, BlockWithRole>();
+
+  for (const block of blocks) {
+    // Take the most recent block for each role
+    if (!roleToBlock.has(block.anchor_role) ||
+        (block.updated_at && block.updated_at > (roleToBlock.get(block.anchor_role)!.updated_at ?? ''))) {
+      roleToBlock.set(block.anchor_role, block);
+    }
+  }
+
+  const missingRoles: string[] = [];
+  const staleRoles: string[] = [];
+
+  for (const role of requiredRoles) {
+    const block = roleToBlock.get(role);
+    if (!block) {
+      missingRoles.push(role);
+      continue;
+    }
+
+    const ttlHours = block.refresh_policy?.ttl_hours;
+    if (computeIsStale(block.updated_at, ttlHours)) {
+      staleRoles.push(role);
+    }
+  }
+
+  return {
+    fresh: missingRoles.length === 0 && staleRoles.length === 0,
+    staleRoles,
+    missingRoles,
+  };
 }

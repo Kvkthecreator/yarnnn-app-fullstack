@@ -1,4 +1,4 @@
-\restrict ZhchOleNZ0IFSotVrD0PxoiT2w6X0fysYsqsjVhZWNnuSDqgUo4ghiErgRsO1fa
+\restrict TtOozGuU5VjxoqOzhbo4Hpgmljwr1KxCEprn6hTPg61ARQHFvQZ3dv5X9cYA2Xz
 CREATE SCHEMA public;
 CREATE TYPE public.alert_severity AS ENUM (
     'info',
@@ -1052,14 +1052,6 @@ BEGIN
   RETURN reset_count;
 END;
 $$;
-CREATE FUNCTION public.fn_set_basket_anchor_updated_at() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$;
 CREATE FUNCTION public.fn_timeline_after_raw_dump() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -1689,33 +1681,26 @@ BEGIN
   -- All operations in this function run in a single transaction
   -- If any DELETE fails, the entire operation rolls back
   -- ========================================
-  -- WORK-PLATFORM TABLES (New)
+  -- WORK-PLATFORM TABLES (Phase 2e Schema)
   -- ========================================
-  -- Delete work_context_mutations (leaf node, no cascade)
-  DELETE FROM work_context_mutations
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
-  );
-  -- Delete work_iterations (leaf node, no cascade)
+  -- Delete work_iterations (references work_tickets)
   DELETE FROM work_iterations
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
+  WHERE work_ticket_id IN (
+    SELECT id FROM work_tickets WHERE workspace_id = target_workspace_id
   );
-  -- Delete work_artifacts
-  DELETE FROM work_artifacts
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
-  );
-  -- Delete work_checkpoints
+  -- Delete work_checkpoints (references work_tickets)
   DELETE FROM work_checkpoints
-  WHERE work_session_id IN (
-    SELECT id FROM work_sessions WHERE workspace_id = target_workspace_id
+  WHERE work_ticket_id IN (
+    SELECT id FROM work_tickets WHERE workspace_id = target_workspace_id
   );
-  -- Delete work_sessions (both workspace and project scoped)
-  DELETE FROM work_sessions
+  -- Delete work_tickets (references work_requests)
+  DELETE FROM work_tickets
   WHERE workspace_id = target_workspace_id;
-  -- Delete agent_work_requests
-  DELETE FROM agent_work_requests
+  -- Delete work_requests
+  DELETE FROM work_requests
+  WHERE workspace_id = target_workspace_id;
+  -- Delete agent_sessions
+  DELETE FROM agent_sessions
   WHERE workspace_id = target_workspace_id;
   -- Delete project_agents (before projects)
   DELETE FROM project_agents
@@ -1726,111 +1711,54 @@ BEGIN
   DELETE FROM projects
   WHERE workspace_id = target_workspace_id;
   -- ========================================
-  -- SUBSTRATE-API TABLES (Existing)
+  -- SUBSTRATE TABLES
   -- ========================================
-  -- Delete substrate_references for documents in this workspace
-  DELETE FROM substrate_references
-  WHERE document_id IN (
-    SELECT id FROM documents WHERE workspace_id = target_workspace_id
-  );
-  -- Delete document_versions for documents in this workspace
-  DELETE FROM document_versions
-  WHERE document_id IN (
-    SELECT id FROM documents WHERE workspace_id = target_workspace_id
-  );
-  -- Delete document_context_items for documents in this workspace
-  DELETE FROM document_context_items
-  WHERE document_id IN (
-    SELECT id FROM documents WHERE workspace_id = target_workspace_id
-  );
-  -- Delete documents in this workspace
-  DELETE FROM documents WHERE workspace_id = target_workspace_id;
-  -- Delete events (before blocks due to block_id FK NO ACTION)
-  DELETE FROM events
+  -- Delete work_outputs (before blocks)
+  DELETE FROM work_outputs
   WHERE basket_id IN (
     SELECT id FROM baskets WHERE workspace_id = target_workspace_id
   );
-  -- Delete block_links for blocks in this workspace's baskets
-  DELETE FROM block_links
-  WHERE block_id IN (
-    SELECT id FROM blocks WHERE basket_id IN (
-      SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-    )
-  );
-  -- Delete substrate_relationships for blocks in this workspace's baskets
+  -- Delete substrate_relationships (before blocks/context_items)
   DELETE FROM substrate_relationships
-  WHERE from_block_id IN (
-    SELECT id FROM blocks WHERE basket_id IN (
-      SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-    )
+  WHERE basket_id IN (
+    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
   );
-  -- Delete blocks in this workspace's baskets
+  -- Delete blocks (core substrate)
   DELETE FROM blocks
   WHERE basket_id IN (
     SELECT id FROM baskets WHERE workspace_id = target_workspace_id
   );
-  -- Delete raw_dumps in this workspace's baskets
-  DELETE FROM raw_dumps
+  -- Delete context_items (if still exists)
+  DELETE FROM context_items
   WHERE basket_id IN (
     SELECT id FROM baskets WHERE workspace_id = target_workspace_id
   );
-  -- Delete reflections_artifact in this workspace's baskets
+  -- Delete reference_assets
+  DELETE FROM reference_assets
+  WHERE basket_id IN (
+    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
+  );
+  -- Delete reflections_artifact
   DELETE FROM reflections_artifact
   WHERE basket_id IN (
     SELECT id FROM baskets WHERE workspace_id = target_workspace_id
   );
-  -- Delete timeline_events in this workspace's baskets
-  DELETE FROM timeline_events
-  WHERE basket_id IN (
-    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-  );
-  -- Delete proposal_executions (before proposals due to FK)
-  DELETE FROM proposal_executions
-  WHERE proposal_id IN (
-    SELECT id FROM proposals WHERE basket_id IN (
-      SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-    )
-  );
-  -- Delete proposals in this workspace's baskets
+  -- Delete proposals (governance)
   DELETE FROM proposals
   WHERE basket_id IN (
     SELECT id FROM baskets WHERE workspace_id = target_workspace_id
   );
-  -- Delete basket_anchors in this workspace's baskets
-  DELETE FROM basket_anchors
-  WHERE basket_id IN (
-    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-  );
-  -- Delete agent_processing_queue items for this workspace's baskets
-  DELETE FROM agent_processing_queue
-  WHERE basket_id IN (
-    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-  );
-  -- Delete app_events (before baskets due to FK NO ACTION)
-  DELETE FROM app_events
-  WHERE basket_id IN (
-    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-  );
-  -- Delete mcp_unassigned_captures (before baskets due to FK NO ACTION)
-  DELETE FROM mcp_unassigned_captures
-  WHERE assigned_basket_id IN (
-    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-  );
-  -- Delete narrative (before baskets due to FK NO ACTION)
-  DELETE FROM narrative
-  WHERE basket_id IN (
-    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-  );
-  -- Delete baskets in this workspace (after projects deleted)
-  DELETE FROM baskets WHERE workspace_id = target_workspace_id;
+  -- Delete baskets
+  DELETE FROM baskets
+  WHERE workspace_id = target_workspace_id;
   -- ========================================
-  -- PRESERVED (Intentional)
-  -- ========================================
-  -- - workspaces (workspace itself remains, just empty)
-  -- - workspace_memberships (user still has access)
-  -- - users (account preserved)
+  -- NOTE: The following are intentionally NOT deleted:
+  -- - workspaces (the container itself)
+  -- - workspace_memberships (user access)
+  -- - users (shared across workspaces)
   -- - workspace_governance_settings (settings preserved)
   -- - Integration tokens/connections (preserved for future use)
+  -- ========================================
 END;
 $$;
 CREATE FUNCTION public.queue_agent_processing() RETURNS trigger
@@ -2287,8 +2215,10 @@ CREATE TABLE public.blocks (
     anchor_confidence real,
     embedding public.vector(1536),
     derived_from_asset_id uuid,
+    refresh_policy jsonb,
     CONSTRAINT blocks_anchor_confidence_check CHECK (((anchor_confidence >= (0.0)::double precision) AND (anchor_confidence <= (1.0)::double precision))),
     CONSTRAINT blocks_anchor_confidence_v3_check CHECK (((anchor_confidence IS NULL) OR ((anchor_confidence >= (0.0)::double precision) AND (anchor_confidence <= (1.0)::double precision)))),
+    CONSTRAINT blocks_anchor_role_check CHECK ((anchor_role = ANY (ARRAY['problem'::text, 'customer'::text, 'solution'::text, 'feature'::text, 'constraint'::text, 'metric'::text, 'insight'::text, 'vision'::text, 'trend_digest'::text, 'competitor_snapshot'::text, 'market_signal'::text, 'brand_voice'::text, 'strategic_direction'::text, 'customer_insight'::text]))),
     CONSTRAINT blocks_anchor_status_v3_check CHECK (((anchor_status IS NULL) OR (anchor_status = ANY (ARRAY['proposed'::text, 'accepted'::text, 'rejected'::text])))),
     CONSTRAINT blocks_constant_requires_scope CHECK ((((state = 'CONSTANT'::public.block_state) AND (scope IS NOT NULL)) OR (state <> 'CONSTANT'::public.block_state))),
     CONSTRAINT blocks_content_not_empty CHECK (((content IS NOT NULL) AND (content <> ''::text))),
@@ -2358,26 +2288,6 @@ CREATE TABLE public.asset_type_catalog (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_by_user_id uuid,
     notes text
-);
-CREATE TABLE public.basket_anchors (
-    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
-    basket_id uuid NOT NULL,
-    anchor_key text NOT NULL,
-    label text NOT NULL,
-    scope text NOT NULL,
-    expected_type text NOT NULL,
-    required boolean DEFAULT false NOT NULL,
-    description text,
-    ordering integer,
-    linked_substrate_id uuid,
-    status text DEFAULT 'active'::text NOT NULL,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    last_refreshed_at timestamp with time zone,
-    last_relationship_count integer DEFAULT 0 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT basket_anchors_expected_type_check CHECK ((expected_type = ANY (ARRAY['block'::text, 'context_item'::text]))),
-    CONSTRAINT basket_anchors_scope_check CHECK ((scope = ANY (ARRAY['core'::text, 'brain'::text, 'custom'::text])))
 );
 CREATE TABLE public.basket_deltas (
     delta_id uuid NOT NULL,
@@ -3271,8 +3181,6 @@ ALTER TABLE ONLY public.artifact_generation_settings
     ADD CONSTRAINT artifact_generation_settings_pkey PRIMARY KEY (workspace_id);
 ALTER TABLE ONLY public.asset_type_catalog
     ADD CONSTRAINT asset_type_catalog_pkey PRIMARY KEY (asset_type);
-ALTER TABLE ONLY public.basket_anchors
-    ADD CONSTRAINT basket_anchors_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.basket_deltas
     ADD CONSTRAINT basket_deltas_pkey PRIMARY KEY (delta_id);
 ALTER TABLE ONLY public.basket_events
@@ -3431,8 +3339,6 @@ CREATE INDEX idx_app_events_dedupe ON public.app_events USING btree (dedupe_key)
 CREATE INDEX idx_app_events_workspace ON public.app_events USING btree (workspace_id, created_at DESC);
 CREATE INDEX idx_asset_type_catalog_active ON public.asset_type_catalog USING btree (is_active) WHERE (is_active = true);
 CREATE INDEX idx_asset_type_catalog_category ON public.asset_type_catalog USING btree (category) WHERE (category IS NOT NULL);
-CREATE INDEX idx_basket_anchors_scope ON public.basket_anchors USING btree (basket_id, scope);
-CREATE INDEX idx_basket_anchors_substrate ON public.basket_anchors USING btree (linked_substrate_id);
 CREATE INDEX idx_basket_deltas_applied_at ON public.basket_deltas USING btree (applied_at);
 CREATE INDEX idx_basket_deltas_basket ON public.basket_deltas USING btree (basket_id, created_at DESC);
 CREATE INDEX idx_basket_deltas_basket_id ON public.basket_deltas USING btree (basket_id);
@@ -3462,6 +3368,7 @@ CREATE INDEX idx_blocks_constants ON public.blocks USING btree (workspace_id, st
 CREATE INDEX idx_blocks_derived_asset ON public.blocks USING btree (derived_from_asset_id, created_at DESC) WHERE (derived_from_asset_id IS NOT NULL);
 CREATE INDEX idx_blocks_raw_dump ON public.blocks USING btree (raw_dump_id);
 CREATE INDEX idx_blocks_recent_validated ON public.blocks USING btree (basket_id, last_validated_at DESC) WHERE (state = 'ACCEPTED'::public.block_state);
+CREATE INDEX idx_blocks_refresh_policy ON public.blocks USING btree (updated_at) WHERE (refresh_policy IS NOT NULL);
 CREATE INDEX idx_blocks_semantic_type ON public.blocks USING btree (basket_id, semantic_type, state);
 CREATE INDEX idx_blocks_staleness ON public.blocks USING btree (last_validated_at DESC NULLS LAST);
 CREATE INDEX idx_blocks_state ON public.blocks USING btree (state);
@@ -3627,7 +3534,6 @@ CREATE INDEX relationships_to_block_idx ON public.substrate_relationships USING 
 CREATE INDEX relationships_type_idx ON public.substrate_relationships USING btree (relationship_type) WHERE (state = 'ACCEPTED'::public.block_state);
 CREATE UNIQUE INDEX timeline_dump_unique ON public.timeline_events USING btree (ref_id) WHERE (kind = 'dump'::text);
 CREATE INDEX timeline_events_basket_ts_idx ON public.timeline_events USING btree (basket_id, ts DESC);
-CREATE UNIQUE INDEX uq_basket_anchors_key ON public.basket_anchors USING btree (basket_id, anchor_key);
 CREATE UNIQUE INDEX uq_baskets_user_idem ON public.baskets USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
 CREATE UNIQUE INDEX uq_current_insight_canon_per_basket ON public.reflections_artifact USING btree (basket_id) WHERE ((insight_type = 'insight_canon'::text) AND (is_current = true) AND (basket_id IS NOT NULL));
 CREATE UNIQUE INDEX uq_current_insight_canon_per_workspace ON public.reflections_artifact USING btree (workspace_id) WHERE ((insight_type = 'insight_canon'::text) AND (is_current = true) AND (scope_level = 'workspace'::text));
@@ -3638,7 +3544,6 @@ CREATE UNIQUE INDEX uq_dumps_basket_req ON public.raw_dumps USING btree (basket_
 CREATE UNIQUE INDEX uq_raw_dumps_basket_req ON public.raw_dumps USING btree (basket_id, dump_request_id) WHERE (dump_request_id IS NOT NULL);
 CREATE UNIQUE INDEX ux_raw_dumps_basket_trace ON public.raw_dumps USING btree (basket_id, ingest_trace_id) WHERE (ingest_trace_id IS NOT NULL);
 CREATE TRIGGER after_dump_insert AFTER INSERT ON public.raw_dumps FOR EACH ROW EXECUTE FUNCTION public.queue_agent_processing();
-CREATE TRIGGER basket_anchors_set_updated_at BEFORE UPDATE ON public.basket_anchors FOR EACH ROW EXECUTE FUNCTION public.fn_set_basket_anchor_updated_at();
 CREATE TRIGGER basket_signatures_set_updated_at BEFORE UPDATE ON public.basket_signatures FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 CREATE TRIGGER enforce_single_workspace_per_user BEFORE INSERT OR UPDATE ON public.workspace_memberships FOR EACH ROW EXECUTE FUNCTION public.check_single_workspace_per_user();
 CREATE TRIGGER ensure_text_dump_columns BEFORE INSERT ON public.raw_dumps FOR EACH ROW EXECUTE FUNCTION public.ensure_raw_dump_text_columns();
@@ -3706,8 +3611,6 @@ ALTER TABLE ONLY public.artifact_generation_settings
     ADD CONSTRAINT artifact_generation_settings_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.asset_type_catalog
     ADD CONSTRAINT asset_type_catalog_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES auth.users(id);
-ALTER TABLE ONLY public.basket_anchors
-    ADD CONSTRAINT basket_anchors_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.reflections_artifact
     ADD CONSTRAINT basket_reflections_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.basket_signatures
@@ -4193,27 +4096,6 @@ CREATE POLICY artifact_settings_workspace ON public.artifact_generation_settings
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid()))));
 ALTER TABLE public.asset_type_catalog ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.basket_anchors ENABLE ROW LEVEL SECURITY;
-CREATE POLICY basket_anchors_service_full ON public.basket_anchors TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY basket_anchors_workspace_members_delete ON public.basket_anchors FOR DELETE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM (public.baskets b
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = b.workspace_id)))
-  WHERE ((b.id = basket_anchors.basket_id) AND (wm.user_id = auth.uid())))));
-CREATE POLICY basket_anchors_workspace_members_modify ON public.basket_anchors FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1
-   FROM (public.baskets b
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = b.workspace_id)))
-  WHERE ((b.id = basket_anchors.basket_id) AND (wm.user_id = auth.uid())))));
-CREATE POLICY basket_anchors_workspace_members_select ON public.basket_anchors FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
-   FROM (public.baskets b
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = b.workspace_id)))
-  WHERE ((b.id = basket_anchors.basket_id) AND (wm.user_id = auth.uid())))));
-CREATE POLICY basket_anchors_workspace_members_update ON public.basket_anchors FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM (public.baskets b
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = b.workspace_id)))
-  WHERE ((b.id = basket_anchors.basket_id) AND (wm.user_id = auth.uid()))))) WITH CHECK ((EXISTS ( SELECT 1
-   FROM (public.baskets b
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = b.workspace_id)))
-  WHERE ((b.id = basket_anchors.basket_id) AND (wm.user_id = auth.uid())))));
 ALTER TABLE public.basket_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY basket_member_delete ON public.baskets FOR DELETE USING ((workspace_id IN ( SELECT workspace_memberships.workspace_id
    FROM public.workspace_memberships
@@ -4518,4 +4400,4 @@ CREATE POLICY ws_owner_or_member_read ON public.workspaces FOR SELECT USING (((o
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid())))));
 CREATE POLICY ws_owner_update ON public.workspaces FOR UPDATE USING ((owner_id = auth.uid()));
-\unrestrict ZhchOleNZ0IFSotVrD0PxoiT2w6X0fysYsqsjVhZWNnuSDqgUo4ghiErgRsO1fa
+\unrestrict TtOozGuU5VjxoqOzhbo4Hpgmljwr1KxCEprn6hTPg61ARQHFvQZ3dv5X9cYA2Xz

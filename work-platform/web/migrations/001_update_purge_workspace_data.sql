@@ -138,11 +138,8 @@ BEGIN
     SELECT id FROM baskets WHERE workspace_id = target_workspace_id
   );
 
-  -- Delete basket_anchors in this workspace's baskets
-  DELETE FROM basket_anchors
-  WHERE basket_id IN (
-    SELECT id FROM baskets WHERE workspace_id = target_workspace_id
-  );
+  -- NOTE: basket_anchors table was dropped in 20251202_context_roles_phase1.sql
+  -- Context roles now live on blocks.anchor_role
 
   -- Delete agent_processing_queue items for this workspace's baskets
   DELETE FROM agent_processing_queue
