@@ -113,8 +113,41 @@ export async function POST(
     let archivedBlocks = 0;
     let redactedDumps = 0;
     let deletedAssets = 0;
+    let deletedSchedules = 0;
+    let cancelledJobs = 0;
 
     if (mode === 'archive_all') {
+      // Delete all schedules for this project
+      console.log('[PURGE API] Deleting schedules...');
+      const { data: schedulesToDelete } = await supabase
+        .from('project_schedules')
+        .select('id')
+        .eq('project_id', projectId);
+
+      const scheduleIds = schedulesToDelete?.map(s => s.id) || [];
+
+      if (scheduleIds.length > 0) {
+        // Cancel any pending jobs for these schedules
+        const { data: cancelledJobsData } = await supabase
+          .from('jobs')
+          .update({ status: 'cancelled' })
+          .in('parent_schedule_id', scheduleIds)
+          .in('status', ['pending', 'claimed'])
+          .select('id');
+
+        cancelledJobs = cancelledJobsData?.length || 0;
+
+        // Delete the schedules
+        await supabase
+          .from('project_schedules')
+          .delete()
+          .eq('project_id', projectId);
+
+        deletedSchedules = scheduleIds.length;
+      }
+
+      console.log(`[PURGE API] Deleted ${deletedSchedules} schedules, cancelled ${cancelledJobs} jobs`);
+
       // Mark all active blocks as SUPERSEDED (soft delete)
       // Valid block states: PROPOSED, ACCEPTED, LOCKED, CONSTANT, SUPERSEDED, REJECTED
       console.log('[PURGE API] Marking blocks as SUPERSEDED...');
@@ -219,7 +252,7 @@ export async function POST(
       console.log(`[PURGE API] Deleted ${deletedAssets} assets`);
     }
 
-    const totalOperations = archivedBlocks + redactedDumps + deletedAssets;
+    const totalOperations = archivedBlocks + redactedDumps + deletedAssets + deletedSchedules;
     console.log(`[PURGE API] Success: ${totalOperations} total operations`);
 
     // User-friendly message
@@ -227,6 +260,7 @@ export async function POST(
     if (archivedBlocks > 0) messageParts.push(`archived ${archivedBlocks} blocks`);
     if (redactedDumps > 0) messageParts.push(`redacted ${redactedDumps} dumps`);
     if (deletedAssets > 0) messageParts.push(`deleted ${deletedAssets} assets`);
+    if (deletedSchedules > 0) messageParts.push(`deleted ${deletedSchedules} schedules`);
 
     const message = messageParts.length > 0
       ? `Successfully ${messageParts.join(', ')}`
@@ -239,6 +273,8 @@ export async function POST(
         archivedBlocks,
         redactedDumps,
         deletedAssets,
+        deletedSchedules,
+        cancelledJobs,
       },
       message,
     });

@@ -14,6 +14,7 @@ interface BasketDangerZoneProps {
     blocks: number;
     dumps: number;
     assets: number;
+    schedules?: number;
   };
 }
 
@@ -35,6 +36,7 @@ export function BasketDangerZone({
       archivedBlocks: number;
       redactedDumps: number;
       deletedAssets: number;
+      deletedSchedules?: number;
     };
   } | null>(null);
 
@@ -97,7 +99,7 @@ export function BasketDangerZone({
   };
 
   const isConfirmed = confirmationText === projectName;
-  const hasData = basketStats.blocks > 0 || basketStats.dumps > 0 || basketStats.assets > 0;
+  const hasData = basketStats.blocks > 0 || basketStats.dumps > 0 || basketStats.assets > 0 || (basketStats.schedules || 0) > 0;
 
   return (
     <div className="rounded-2xl border border-surface-danger-border bg-surface-danger/80 p-6 space-y-4 text-sm text-destructive-foreground">
@@ -122,6 +124,9 @@ export function BasketDangerZone({
               <li>• {basketStats.blocks} context block{basketStats.blocks !== 1 ? 's' : ''}</li>
               <li>• {basketStats.dumps} raw dump{basketStats.dumps !== 1 ? 's' : ''}</li>
               <li>• {basketStats.assets} uploaded asset{basketStats.assets !== 1 ? 's' : ''}</li>
+              {(basketStats.schedules || 0) > 0 && (
+                <li>• {basketStats.schedules} schedule{basketStats.schedules !== 1 ? 's' : ''}</li>
+              )}
             </ul>
           </div>
 
@@ -248,6 +253,9 @@ export function BasketDangerZone({
                   )}
                   {result.totals.deletedAssets > 0 && (
                     <li>• Deleted {result.totals.deletedAssets} assets</li>
+                  )}
+                  {(result.totals.deletedSchedules || 0) > 0 && (
+                    <li>• Deleted {result.totals.deletedSchedules} schedules</li>
                   )}
                 </ul>
               )}

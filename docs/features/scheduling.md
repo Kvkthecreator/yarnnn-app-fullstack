@@ -1,7 +1,7 @@
 # Scheduling Feature Architecture
 
 > **Last Updated:** December 2024
-> **Status:** Implemented (Phase 1)
+> **Status:** Phase 2 - Schedules Management UI
 > **Decision:** Render Worker with Job Queue Abstraction
 
 ---
@@ -257,12 +257,23 @@ substrate-api/api/src/
 └── app/
     └── agent_server.py      # Integrates job worker on startup
 
-work-platform/web/app/
-├── api/projects/[id]/schedules/
-│   ├── route.ts             # GET, POST schedules
-│   └── [scheduleId]/route.ts # GET, PATCH, DELETE schedule
-└── projects/[id]/work-tickets/new/configure/
-    └── RecipeConfigureClient.tsx  # Schedule UI
+work-platform/web/
+├── app/
+│   ├── api/projects/[id]/schedules/
+│   │   ├── route.ts             # GET, POST schedules
+│   │   └── [scheduleId]/route.ts # GET, PATCH, DELETE schedule
+│   └── projects/[id]/
+│       ├── schedules/
+│       │   ├── page.tsx             # Schedules list page (server)
+│       │   └── SchedulesClient.tsx  # List + state management (client)
+│       └── work-tickets/new/configure/
+│           └── RecipeConfigureClient.tsx  # Schedule UI (inline create)
+└── components/
+    ├── projects/ProjectNavigation.tsx  # Tab navigation (includes Schedules)
+    └── schedules/
+        ├── ScheduleCard.tsx         # List item component
+        ├── ScheduleDetailModal.tsx  # View details + actions
+        └── ScheduleFormModal.tsx    # Create/Edit form
 
 supabase/migrations/
 ├── 20251203_project_schedules.sql  # Schedule preferences table
@@ -434,6 +445,27 @@ The job worker coexists with the canonical queue processor:
 
 ---
 
+## Schedules Management UI (Phase 2)
+
+Dedicated page for viewing and managing recurring schedules.
+
+### User Flow
+1. **View**: Schedules tab → list of configured schedules
+2. **Create**: From recipe config page OR "+ New" button → recipe select → form
+3. **Details**: Click card → modal with config + run history
+4. **Edit/Delete**: From detail modal with confirmation
+
+### Components
+- **SchedulesClient**: List with real-time updates, state for modals
+- **ScheduleCard**: Recipe name, frequency, next/last run, enable toggle
+- **ScheduleDetailModal**: Full config view, edit/delete actions
+- **ScheduleFormModal**: Recipe picker, frequency, day/time selectors
+
+### Purge Integration
+Project purge (`archive_all` mode) deletes schedules and cancels pending jobs.
+
+---
+
 ## Changelog
 
 | Date | Change | Author |
@@ -442,3 +474,7 @@ The job worker coexists with the canonical queue processor:
 | | Added project_schedules table | |
 | | Added jobs queue abstraction | |
 | | Integrated with RecipeConfigureClient UI | |
+| 2024-12-03 | Phase 2: Schedules management page | Claude |
+| | Added Schedules tab to project navigation | |
+| | Added list/detail/form modal components | |
+| | Integrated with project purge | |

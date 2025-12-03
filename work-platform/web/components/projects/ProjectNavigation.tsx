@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Layers, Briefcase, ClipboardCheck, Settings2 } from 'lucide-react';
+import { LayoutDashboard, Layers, Briefcase, ClipboardCheck, Calendar, Settings2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ProjectNavigationProps {
@@ -24,6 +24,11 @@ const tabs = [
     name: 'Work Tickets',
     href: '/work-tickets-view',
     icon: Briefcase,
+  },
+  {
+    name: 'Schedules',
+    href: '/schedules',
+    icon: Calendar,
   },
   {
     name: 'Work Review',

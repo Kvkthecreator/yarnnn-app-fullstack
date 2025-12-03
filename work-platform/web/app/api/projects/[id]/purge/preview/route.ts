@@ -118,10 +118,22 @@ export async function GET(
       );
     }
 
+    // Count schedules
+    const { count: schedulesCount, error: schedulesError } = await supabase
+      .from('project_schedules')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', projectId);
+
+    if (schedulesError) {
+      console.error('[PURGE PREVIEW API] Database error counting schedules:', schedulesError);
+      // Don't fail - schedules table might not exist yet
+    }
+
     const result = {
       blocks: blocksCount || 0,
       dumps: dumpsCount || 0,
       assets: assetsCount || 0,
+      schedules: schedulesCount || 0,
     };
 
     console.log(`[PURGE PREVIEW API] Preview result for basket ${basketId}:`, result);
