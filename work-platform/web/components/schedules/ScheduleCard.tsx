@@ -2,8 +2,9 @@
 
 import { Badge } from '@/components/ui/Badge';
 import { Switch } from '@/components/ui/switch';
-import { Calendar, Clock, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { Calendar, Clock, CheckCircle2, XCircle, AlertCircle, Settings2 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
+import Link from 'next/link';
 
 interface Schedule {
   id: string;
@@ -22,6 +23,7 @@ interface Schedule {
 
 interface ScheduleCardProps {
   schedule: Schedule;
+  projectId: string;
   onClick: () => void;
   onToggleEnable: (enabled: boolean) => void;
 }
@@ -42,7 +44,7 @@ const AGENT_TYPE_COLORS: Record<string, string> = {
   default: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200',
 };
 
-export default function ScheduleCard({ schedule, onClick, onToggleEnable }: ScheduleCardProps) {
+export default function ScheduleCard({ schedule, projectId, onClick, onToggleEnable }: ScheduleCardProps) {
   const agentColor = AGENT_TYPE_COLORS[schedule.agent_type] || AGENT_TYPE_COLORS.default;
 
   // Format schedule timing
@@ -124,11 +126,18 @@ export default function ScheduleCard({ schedule, onClick, onToggleEnable }: Sche
           </div>
         </div>
 
-        {/* Right: Enable toggle */}
+        {/* Right: Configure link and toggle */}
         <div
-          className="flex items-center"
+          className="flex items-center gap-3"
           onClick={(e) => e.stopPropagation()}
         >
+          <Link
+            href={`/projects/${projectId}/work-tickets/new/configure?recipe=${schedule.recipe_slug}`}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            title="Configure recipe"
+          >
+            <Settings2 className="h-4 w-4" />
+          </Link>
           <Switch
             checked={schedule.enabled}
             onCheckedChange={onToggleEnable}

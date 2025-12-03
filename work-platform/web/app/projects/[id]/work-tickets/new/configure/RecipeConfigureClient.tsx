@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/Label";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Badge } from "@/components/ui/Badge";
-import { ArrowLeft, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Users, Eye, TrendingUp, Target, Brain, MessageSquare, Compass, UserCheck, FileOutput, Calendar, Clock, RefreshCw } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, AlertCircle, AlertTriangle, Users, Eye, TrendingUp, Target, Brain, MessageSquare, Compass, UserCheck, FileOutput, Calendar, Clock, RefreshCw, History, Zap, ExternalLink } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -74,6 +74,15 @@ interface ExistingSchedule {
   last_run_at: string | null;
 }
 
+interface ExecutionHistoryItem {
+  id: string;
+  status: string;
+  created_at: string;
+  completed_at: string | null;
+  source: string;
+  schedule_id?: string;
+}
+
 interface RecipeConfigureClientProps {
   projectId: string;
   basketId: string;
@@ -81,6 +90,7 @@ interface RecipeConfigureClientProps {
   recipe: Recipe & { db_id?: string };
   contextAnchors?: ContextAnchor[];
   existingSchedule?: ExistingSchedule | null;
+  executionHistory?: ExecutionHistoryItem[];
 }
 
 // Day of week options
@@ -109,6 +119,7 @@ export default function RecipeConfigureClient({
   recipe,
   contextAnchors = [],
   existingSchedule = null,
+  executionHistory = [],
 }: RecipeConfigureClientProps) {
   const router = useRouter();
 
@@ -688,6 +699,72 @@ export default function RecipeConfigureClient({
                 </div>
               )}
             </div>
+          </Card>
+        )}
+
+        {/* Execution History Card */}
+        {executionHistory.length > 0 && (
+          <Card className="p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <History className="h-5 w-5 text-muted-foreground" />
+              <h2 className="text-xl font-semibold text-foreground">Recent Executions</h2>
+            </div>
+            <div className="space-y-2">
+              {executionHistory.map((ticket) => {
+                const isScheduled = ticket.source === 'scheduled' || !!ticket.schedule_id;
+                return (
+                  <Link
+                    key={ticket.id}
+                    href={`/projects/${projectId}/work-tickets/${ticket.id}/track`}
+                    className="flex items-center justify-between p-3 rounded-lg border border-border hover:border-ring transition bg-background"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Badge
+                        variant={
+                          ticket.status === 'completed' ? 'default' :
+                          ticket.status === 'running' ? 'secondary' :
+                          ticket.status === 'failed' ? 'destructive' : 'outline'
+                        }
+                        className="capitalize text-xs"
+                      >
+                        {ticket.status}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-xs gap-1",
+                          isScheduled ? "text-primary border-primary/30 bg-primary/5" : "text-muted-foreground"
+                        )}
+                      >
+                        {isScheduled ? (
+                          <>
+                            <Calendar className="h-3 w-3" />
+                            Scheduled
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="h-3 w-3" />
+                            Manual
+                          </>
+                        )}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {new Date(ticket.created_at).toLocaleDateString()} at{' '}
+                        {new Date(ticket.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                  </Link>
+                );
+              })}
+            </div>
+            <Link
+              href={`/projects/${projectId}/work-tickets-view`}
+              className="mt-4 inline-flex items-center text-sm text-primary hover:underline"
+            >
+              View all work tickets
+              <ExternalLink className="h-3 w-3 ml-1" />
+            </Link>
           </Card>
         )}
 

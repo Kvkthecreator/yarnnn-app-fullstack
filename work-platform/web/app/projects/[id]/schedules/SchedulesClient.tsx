@@ -203,6 +203,7 @@ export default function SchedulesClient({
             <ScheduleCard
               key={schedule.id}
               schedule={schedule}
+              projectId={projectId}
               onClick={() => setSelectedScheduleId(schedule.id)}
               onToggleEnable={(enabled) => handleToggleEnable(schedule.id, enabled)}
             />

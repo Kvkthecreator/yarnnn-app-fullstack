@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { TaskProgressList } from "@/components/TaskProgressList";
+import { Calendar, Zap } from "lucide-react";
 
 interface WorkTicketCardProps {
   ticket: {
@@ -15,6 +16,8 @@ interface WorkTicketCardProps {
     metadata?: {
       task_description?: string;
       recipe_slug?: string;
+      source?: string;
+      schedule_id?: string;
       [key: string]: any;
     };
     work_outputs?: any[];
@@ -31,6 +34,7 @@ export function WorkTicketCard({ ticket, projectId }: WorkTicketCardProps) {
     ticket.metadata?.recipe_slug ||
     "Work Ticket";
   const isRunning = ticket.status === "running";
+  const isScheduled = ticket.metadata?.source === 'scheduled' || !!ticket.metadata?.schedule_id;
 
   return (
     <Link key={ticket.id} href={`/projects/${projectId}/work-tickets/${ticket.id}/track`}>
@@ -46,6 +50,23 @@ export function WorkTicketCard({ ticket, projectId }: WorkTicketCardProps) {
               </Badge>
               <Badge variant="outline" className="text-xs capitalize">
                 {ticket.agent_type}
+              </Badge>
+              {/* Source badge: Scheduled or Manual */}
+              <Badge
+                variant="outline"
+                className={`text-xs gap-1 ${isScheduled ? 'text-primary border-primary/30 bg-primary/5' : 'text-muted-foreground'}`}
+              >
+                {isScheduled ? (
+                  <>
+                    <Calendar className="h-3 w-3" />
+                    Scheduled
+                  </>
+                ) : (
+                  <>
+                    <Zap className="h-3 w-3" />
+                    Manual
+                  </>
+                )}
               </Badge>
               {outputCount > 0 && (
                 <Badge variant="secondary" className="text-xs">

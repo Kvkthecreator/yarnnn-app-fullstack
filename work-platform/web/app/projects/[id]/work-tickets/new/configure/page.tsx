@@ -131,6 +131,25 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
     .eq('recipe_id', recipeData.id)
     .maybeSingle();
 
+  // Fetch recent execution history for this recipe
+  // Work tickets store recipe_slug in metadata.recipe_id or metadata.recipe_slug
+  const { data: recentTickets } = await supabase
+    .from('work_tickets')
+    .select('id, status, created_at, completed_at, metadata')
+    .eq('basket_id', project.basket_id)
+    .or(`metadata->>recipe_id.eq.${recipeData.slug},metadata->>recipe_slug.eq.${recipeData.slug}`)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  const executionHistory = (recentTickets || []).map(ticket => ({
+    id: ticket.id,
+    status: ticket.status,
+    created_at: ticket.created_at,
+    completed_at: ticket.completed_at,
+    source: ticket.metadata?.source || 'manual',
+    schedule_id: ticket.metadata?.schedule_id,
+  }));
+
   return (
     <RecipeConfigureClient
       projectId={projectId}
@@ -139,6 +158,7 @@ export default async function RecipeConfigurePage({ params, searchParams }: Page
       recipe={recipe}
       contextAnchors={contextAnchors}
       existingSchedule={existingSchedule}
+      executionHistory={executionHistory}
     />
   );
 }

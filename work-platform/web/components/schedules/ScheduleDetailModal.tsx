@@ -14,8 +14,9 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from '@/components/ui/AlertDialog';
-import { Calendar, Clock, Pencil, Trash2, Loader2, CheckCircle2, XCircle, Play } from 'lucide-react';
+import { Calendar, Clock, Pencil, Trash2, Loader2, CheckCircle2, XCircle, Play, Settings2, ExternalLink } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
+import Link from 'next/link';
 
 interface Schedule {
   id: string;
@@ -133,6 +134,15 @@ export default function ScheduleDetailModal({
                   Produces: <span className="text-foreground">{outputRole}</span> context
                 </p>
               )}
+              {/* Link to full recipe configuration */}
+              <Link
+                href={`/projects/${projectId}/work-tickets/new/configure?recipe=${schedule.recipe_slug}`}
+                className="mt-2 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                Configure recipe & view history
+                <ExternalLink className="h-3 w-3" />
+              </Link>
             </div>
 
             {/* Schedule Config */}
