@@ -22,17 +22,29 @@ const SEMANTIC_TYPE_OPTIONS = [
   { value: 'objective', label: 'Objective', description: 'Specific target or goal' },
 ];
 
-// Anchor role options (foundational blocks that agents prioritize)
+// Anchor role options - must match blocks_anchor_role_check constraint in DB
+// Foundation roles: problem, customer, vision
+// Insight roles: trend_digest, competitor_snapshot, market_signal, brand_voice, strategic_direction, customer_insight
+// Other: solution, feature, constraint, metric, insight
 const ANCHOR_ROLE_OPTIONS = [
-  { value: '', label: 'None', description: 'Regular block (not anchored)' },
-  { value: 'topic', label: 'Topic', description: 'What you are working on' },
-  { value: 'vision', label: 'Vision', description: 'Why this project exists' },
-  { value: 'problem', label: 'Problem', description: 'Core pain point being solved' },
-  { value: 'customer', label: 'Customer', description: 'Target user or audience' },
-  { value: 'solution', label: 'Solution', description: 'How the problem is solved' },
-  { value: 'feature', label: 'Feature', description: 'Key capability' },
-  { value: 'constraint', label: 'Constraint', description: 'Hard limitation' },
-  { value: 'metric', label: 'Metric', description: 'Success measure' },
+  { value: '', label: 'None', description: 'Regular block (not anchored)', category: 'none' },
+  // Foundation roles (core project definition)
+  { value: 'problem', label: 'Problem', description: 'Core pain point being solved', category: 'foundation' },
+  { value: 'customer', label: 'Customer', description: 'Target user or audience', category: 'foundation' },
+  { value: 'vision', label: 'Vision', description: 'Why this project exists', category: 'foundation' },
+  // Other structural roles
+  { value: 'solution', label: 'Solution', description: 'How the problem is solved', category: 'structure' },
+  { value: 'feature', label: 'Feature', description: 'Key capability', category: 'structure' },
+  { value: 'constraint', label: 'Constraint', description: 'Hard limitation', category: 'structure' },
+  { value: 'metric', label: 'Metric', description: 'Success measure', category: 'structure' },
+  { value: 'insight', label: 'Insight', description: 'Key learning or discovery', category: 'structure' },
+  // Insight roles (agent-producible, refreshable)
+  { value: 'trend_digest', label: 'Trend Digest', description: 'Industry trends and market movements', category: 'insight' },
+  { value: 'competitor_snapshot', label: 'Competitor Snapshot', description: 'Competitive intelligence', category: 'insight' },
+  { value: 'market_signal', label: 'Market Signal', description: 'Research and market insights', category: 'insight' },
+  { value: 'brand_voice', label: 'Brand Voice', description: 'Tone and style guidelines', category: 'insight' },
+  { value: 'strategic_direction', label: 'Strategic Direction', description: 'Strategic goals and priorities', category: 'insight' },
+  { value: 'customer_insight', label: 'Customer Insight', description: 'Deep customer understanding', category: 'insight' },
 ];
 
 interface Block {
