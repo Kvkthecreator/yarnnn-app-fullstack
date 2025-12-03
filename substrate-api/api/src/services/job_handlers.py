@@ -12,10 +12,16 @@ To add a new job type:
 1. Create a handler function
 2. Register it with @JobHandlerRegistry.register('job_type')
 3. The worker will automatically route jobs to your handler
+
+Context Entries Integration (2025-12-03):
+- Recipes can specify `context_required` in payload
+- Context is provisioned before work ticket creation
+- Provisioned context stored in work_ticket metadata
+- See: /docs/architecture/ADR_CONTEXT_ENTRIES.md
 """
 
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -108,14 +114,17 @@ async def handle_scheduled_work(payload: Dict[str, Any]) -> Dict[str, Any]:
         - basket_id: Basket UUID
         - recipe_parameters: Dict of recipe params
         - context_outputs: Optional context role targeting
+        - context_required: Optional list of anchor_roles to provision
         - triggered_at: When the job was created
 
     Returns:
         - work_ticket_id: Created ticket UUID
         - status: 'queued'
+        - context_provisioned: Dict with provisioning info (if context_required)
     """
     # Import here to avoid circular imports
     from app.utils.supabase import supabase_admin
+    from services.context_provisioner import ContextProvisioner
 
     supabase = supabase_admin()
 
@@ -124,6 +133,7 @@ async def handle_scheduled_work(payload: Dict[str, Any]) -> Dict[str, Any]:
     recipe_slug = payload.get('recipe_slug')
     recipe_parameters = payload.get('recipe_parameters', {})
     context_outputs = payload.get('context_outputs')
+    context_required = payload.get('context_required', [])
     schedule_id = payload.get('schedule_id')
 
     logger.info(
@@ -143,6 +153,55 @@ async def handle_scheduled_work(payload: Dict[str, Any]) -> Dict[str, Any]:
     # Add context outputs if present
     if context_outputs:
         metadata['context_outputs'] = context_outputs
+
+    # Provision context if required by recipe
+    context_provisioned = None
+    if context_required and basket_id:
+        try:
+            provisioner = ContextProvisioner()
+            provision_result = await provisioner.get_recipe_context(
+                basket_id=basket_id,
+                recipe_context_roles=context_required,
+                include_foundation=True,
+                resolve_assets=False,  # URLs resolved at execution time
+            )
+
+            # Store provisioned context in metadata for agent consumption
+            metadata['provisioned_context'] = {
+                'roles': list(provision_result.entries.keys()),
+                'missing_roles': provision_result.missing_roles,
+                'stale_roles': provision_result.stale_roles,
+                'completeness': provision_result.completeness,
+                'provisioned_at': provision_result.provisioned_at.isoformat(),
+            }
+
+            # Store actual context data for prompt injection
+            metadata['context_entries'] = {
+                role: {
+                    'data': entry.get('data', {}),
+                    'display_name': entry.get('display_name') or entry.get('schema_display_name'),
+                }
+                for role, entry in provision_result.entries.items()
+            }
+
+            context_provisioned = {
+                'roles_requested': context_required,
+                'roles_found': list(provision_result.entries.keys()),
+                'missing_roles': provision_result.missing_roles,
+                'is_complete': provision_result.is_complete,
+            }
+
+            logger.info(
+                f"[scheduled_work] Provisioned context for {recipe_slug}: "
+                f"found={context_provisioned['roles_found']}, "
+                f"missing={context_provisioned['missing_roles']}"
+            )
+        except Exception as e:
+            logger.warning(f"[scheduled_work] Context provisioning failed: {e}")
+            metadata['provisioned_context'] = {
+                'error': str(e),
+                'roles_requested': context_required,
+            }
 
     # Create work ticket (synchronous supabase client)
     result = supabase.table('work_tickets').insert({
@@ -165,11 +224,16 @@ async def handle_scheduled_work(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info(f"[scheduled_work] Created work_ticket {work_ticket_id}")
 
-    return {
+    response = {
         'work_ticket_id': work_ticket_id,
         'status': 'queued',
         'recipe_slug': recipe_slug,
     }
+
+    if context_provisioned:
+        response['context_provisioned'] = context_provisioned
+
+    return response
 
 
 @JobHandlerRegistry.register('stale_refresh')
@@ -187,6 +251,7 @@ async def handle_stale_refresh(payload: Dict[str, Any]) -> Dict[str, Any]:
         - recipe_id: Recipe UUID that produces this role
         - recipe_slug: Recipe slug
         - context_outputs: Context targeting config
+        - context_required: Optional list of anchor_roles to provision
         - triggered_at: When the job was created
 
     Returns:
@@ -195,6 +260,7 @@ async def handle_stale_refresh(payload: Dict[str, Any]) -> Dict[str, Any]:
         - anchor_role: The role being refreshed
     """
     from app.utils.supabase import supabase_admin
+    from services.context_provisioner import ContextProvisioner
 
     supabase = supabase_admin()
 
@@ -204,6 +270,7 @@ async def handle_stale_refresh(payload: Dict[str, Any]) -> Dict[str, Any]:
     recipe_id = payload.get('recipe_id')
     recipe_slug = payload.get('recipe_slug')
     context_outputs = payload.get('context_outputs', {})
+    context_required = payload.get('context_required', [])
 
     logger.info(
         f"[stale_refresh] Refreshing {anchor_role} for basket={basket_id}, "
@@ -222,6 +289,44 @@ async def handle_stale_refresh(payload: Dict[str, Any]) -> Dict[str, Any]:
             'auto_promote': context_outputs.get('refresh_policy', {}).get('auto_promote', True),
         },
     }
+
+    # Provision context if required (stale refresh often needs foundation context)
+    if context_required and basket_id:
+        try:
+            provisioner = ContextProvisioner()
+            provision_result = await provisioner.get_recipe_context(
+                basket_id=basket_id,
+                recipe_context_roles=context_required,
+                include_foundation=True,
+                resolve_assets=False,
+            )
+
+            metadata['provisioned_context'] = {
+                'roles': list(provision_result.entries.keys()),
+                'missing_roles': provision_result.missing_roles,
+                'stale_roles': provision_result.stale_roles,
+                'completeness': provision_result.completeness,
+                'provisioned_at': provision_result.provisioned_at.isoformat(),
+            }
+
+            metadata['context_entries'] = {
+                role: {
+                    'data': entry.get('data', {}),
+                    'display_name': entry.get('display_name') or entry.get('schema_display_name'),
+                }
+                for role, entry in provision_result.entries.items()
+            }
+
+            logger.info(
+                f"[stale_refresh] Provisioned context for {anchor_role}: "
+                f"found={list(provision_result.entries.keys())}"
+            )
+        except Exception as e:
+            logger.warning(f"[stale_refresh] Context provisioning failed: {e}")
+            metadata['provisioned_context'] = {
+                'error': str(e),
+                'roles_requested': context_required,
+            }
 
     # Create work ticket (synchronous supabase client)
     result = supabase.table('work_tickets').insert({

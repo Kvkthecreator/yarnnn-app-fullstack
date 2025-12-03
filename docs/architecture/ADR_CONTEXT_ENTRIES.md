@@ -604,7 +604,42 @@ Form-based editing per schema:
 3. Field-level context injection in prompts
 4. Update recipe configuration UI
 
-### Phase 4: Migration & Cleanup
+### Phase 4: Recipe Integration (Implemented 2025-12-03)
+
+1. **ContextProvisioner Service** (`services/context_provisioner.py`)
+   - `ContextProvisionResult` class for structured provision results
+   - `provision_context()` method for bulk fetching by anchor roles
+   - `get_foundation_context()` for core roles (problem, customer, vision, brand)
+   - `get_recipe_context()` for recipe-specific context with foundation
+   - Staleness detection for insight roles
+   - Asset resolution support
+
+2. **Job Handler Integration** (`services/job_handlers.py`)
+   - `handle_scheduled_work()` reads `context_required` from payload
+   - Provisions context before work ticket creation
+   - Stores provisioned context in `work_ticket.metadata.context_entries`
+   - Stores provision metadata in `metadata.provisioned_context`
+   - `handle_stale_refresh()` also supports context provisioning
+
+3. **Database Function Updates** (`migrations/20251203_context_required_in_jobs.sql`)
+   - `check_and_queue_due_schedules()` includes `context_requirements.roles` in job payload
+   - `check_and_queue_stale_anchors()` includes `context_requirements.roles` in job payload
+   - Jobs now carry `context_required` array from recipe definitions
+
+4. **Context Flow**:
+   ```
+   Recipe → context_requirements.roles → Job payload.context_required
+                                                     ↓
+                                          Job handler reads payload
+                                                     ↓
+                                          ContextProvisioner.get_recipe_context()
+                                                     ↓
+                                          work_ticket.metadata.context_entries
+                                                     ↓
+                                          Agent prompt injection
+   ```
+
+### Phase 5: Migration & Cleanup
 
 1. Optional: migrate existing block content to entries
 2. Deprecate block-based context UI
@@ -828,6 +863,7 @@ The following are actively de-wired:
 | 2025-12-03 | Ephemeral/permanent asset model defined |
 | 2025-12-03 | De-wiring of LLM classification for user uploads decided |
 | 2025-12-03 | This ADR created and approved |
+| 2025-12-03 | Phase 4 Recipe Integration implemented |
 
 ---
 
