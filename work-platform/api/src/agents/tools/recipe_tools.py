@@ -284,6 +284,7 @@ async def trigger_recipe(
         ticket_data = {
             "basket_id": basket_id,
             "workspace_id": workspace_id,
+            "agent_type": recipe_slug,  # Use recipe slug as agent type
             "status": "pending",
             "priority": min(max(priority, 1), 10),
             "source": "thinking_partner",
