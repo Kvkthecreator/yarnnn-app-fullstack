@@ -86,3 +86,36 @@ services:
         sync: false
       - key: PORT
         value: "4312"
+
+  # Schedule Executor - Cron job to process due work schedules
+  # Runs every 5 minutes, calls /api/schedules/execute endpoint
+  - type: cron
+    name: yarnnn-schedule-executor
+    env: node
+    schedule: "*/5 * * * *"  # Every 5 minutes
+    buildCommand: npm install -g node-fetch@3
+    startCommand: |
+      node -e "
+        const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+        (async () => {
+          const url = process.env.WORK_PLATFORM_URL + '/api/schedules/execute';
+          const secret = process.env.CRON_SECRET;
+          console.log('[CRON] Executing schedule check at', new Date().toISOString());
+          try {
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + secret }
+            });
+            const data = await res.json();
+            console.log('[CRON] Result:', JSON.stringify(data));
+          } catch (err) {
+            console.error('[CRON] Error:', err.message);
+            process.exit(1);
+          }
+        })();
+      "
+    envVars:
+      - key: WORK_PLATFORM_URL
+        value: https://yarnnn.com
+      - key: CRON_SECRET
+        sync: false

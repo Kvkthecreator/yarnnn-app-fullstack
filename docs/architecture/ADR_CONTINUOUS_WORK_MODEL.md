@@ -117,14 +117,54 @@ async def trigger_recipe(
 ) -> Dict[str, Any]:
 ```
 
-### Schedule Executor (Future)
+### Schedule Executor
 
-The schedule executor is a worker process that:
-1. Polls `project_schedules WHERE enabled = true AND next_run_at <= now()`
+**Implemented:** The schedule executor runs via Render cron job every 5 minutes.
+
+**Architecture:**
+
+```
+┌─────────────────────┐     ┌───────────────────────────────────┐
+│   Render Cron Job   │────▶│  POST /api/schedules/execute      │
+│   (*/5 * * * *)     │     │  (Bearer CRON_SECRET auth)        │
+└─────────────────────┘     └───────────────────────────────────┘
+                                          │
+                                          ▼
+                            ┌───────────────────────────────────┐
+                            │  Query project_schedules          │
+                            │  WHERE enabled = true             │
+                            │  AND next_run_at <= now()         │
+                            └───────────────────────────────────┘
+                                          │
+                                          ▼
+                            ┌───────────────────────────────────┐
+                            │  For each due schedule:           │
+                            │  1. Find/increment cycle          │
+                            │  2. Create work_ticket            │
+                            │  3. Update schedule status        │
+                            └───────────────────────────────────┘
+```
+
+**Endpoint:** `/api/schedules/execute`
+
+- `POST` - Process due schedules (requires `Bearer CRON_SECRET`)
+- `GET` - Health check / status (counts due and active schedules)
+
+**Render Configuration:** See `render.yaml` for cron job definition.
+
+**Environment Variables:**
+- `CRON_SECRET` - Shared secret for authenticating cron requests
+- `WORK_PLATFORM_URL` - Base URL for the work platform (e.g., `https://yarnnn.com`)
+
+**Processing Logic:**
+
+1. Query `project_schedules` where `enabled = true AND next_run_at <= now()`
 2. For each due schedule:
-   - Finds existing continuous ticket OR creates new one
-   - Calls `trigger_recipe` with `schedule_id`, `mode='continuous'`
-   - Updates `project_schedules.last_run_at`, `next_run_at`
+   - Check for existing continuous ticket (`schedule_id` match)
+   - Increment `cycle_number` if continuing, else start at 1
+   - Create `work_ticket` with `mode='continuous'`, `source='schedule'`
+   - Update schedule: `last_run_at`, `last_run_status`, `last_run_ticket_id`, `run_count`
+3. Return summary of processed schedules
 
 ### Output Promotion
 
@@ -167,10 +207,11 @@ ALTER TABLE work_outputs ADD COLUMN promoted_to_context_item_id UUID;
 
 ## Future Work
 
-1. **Schedule Executor Worker** - Cron job or pg_cron to process due schedules
+1. ~~**Schedule Executor Worker**~~ - ✅ Implemented via Render cron job
 2. **Continuous Ticket UI** - Show cycle history, accumulated context
 3. **Auto-promotion Rules** - Configure automatic output-to-context promotion
 4. **Cross-cycle Context** - Allow recipes to explicitly reference previous cycle outputs
+5. **next_run_at Calculation** - Implement logic to calculate next run time based on frequency
 
 ## Related Documents
 
