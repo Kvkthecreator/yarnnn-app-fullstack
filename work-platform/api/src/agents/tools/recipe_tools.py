@@ -222,6 +222,9 @@ async def trigger_recipe(
     recipe_slug: str,
     parameters: Dict[str, Any],
     priority: int = 5,
+    schedule_id: Optional[str] = None,
+    mode: str = "one_shot",
+    cycle_number: int = 1,
 ) -> Dict[str, Any]:
     """
     Trigger a work recipe by creating a work_ticket.
@@ -234,6 +237,9 @@ async def trigger_recipe(
         recipe_slug: Recipe to trigger
         parameters: Recipe parameters
         priority: Ticket priority (1-10)
+        schedule_id: Optional FK to project_schedules for recurring work
+        mode: 'one_shot' (default) or 'continuous' for scheduled work
+        cycle_number: For continuous mode, which execution cycle this is
 
     Returns:
         Result with work_ticket_id
@@ -280,6 +286,9 @@ async def trigger_recipe(
                 "suggestion": "Use write_context to add the missing context items."
             }
 
+        # Determine source based on schedule
+        source = "schedule" if schedule_id else "thinking_partner"
+
         # Create work ticket
         ticket_data = {
             "basket_id": basket_id,
@@ -287,17 +296,23 @@ async def trigger_recipe(
             "agent_type": recipe_slug,  # Use recipe slug as agent type
             "status": "pending",
             "priority": min(max(priority, 1), 10),
-            "source": "thinking_partner",
+            "source": source,
+            "mode": mode,
+            "cycle_number": cycle_number,
             "metadata": {
                 "recipe_slug": recipe_slug,
                 "recipe_name": recipe["name"],
                 "parameters": parameters,
                 "context_required": recipe["context_required"],
-                "triggered_by": "thinking_partner",
+                "triggered_by": "schedule" if schedule_id else "thinking_partner",
                 "tp_session_id": session_id,
                 "triggered_at": datetime.now(timezone.utc).isoformat(),
             }
         }
+
+        # Add schedule_id if provided
+        if schedule_id:
+            ticket_data["schedule_id"] = schedule_id
 
         result = supabase.table("work_tickets").insert(ticket_data).execute()
 
@@ -315,6 +330,9 @@ async def trigger_recipe(
                 "name": recipe["name"],
             },
             "status": "queued",
+            "mode": mode,
+            "cycle_number": cycle_number if mode == "continuous" else None,
+            "schedule_id": schedule_id,
             "message": f"Started {recipe['name']}. The results will appear in your supervision queue when complete.",
             "expected_outputs": recipe["outputs"],
         }
