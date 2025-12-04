@@ -1,7 +1,10 @@
 /**
- * Thinking Partner Types
+ * Thinking Partner Types (v2.0)
  *
- * Types for TP chat interface, state management, and work lifecycle visualization.
+ * Types for TP chat interface, session management, and work lifecycle.
+ * Updated for new session persistence and context management.
+ *
+ * See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
  */
 
 // ============================================================================
@@ -65,7 +68,7 @@ export interface WorkflowStep {
 export interface AgentDelegation {
   agentType: 'research' | 'content' | 'reporting';
   task: string;
-  parameters?: Record<string, any>;
+  parameters?: Record<string, unknown>;
   status: 'pending' | 'running' | 'completed';
 }
 
@@ -94,60 +97,122 @@ export interface WorkOutput {
   title: string;
   body?: string;
   confidence?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   sourceBlockIds?: string[];
   createdAt: string;
 }
 
 // ============================================================================
-// Chat Messages
+// Chat Messages (v2.0 - with DB persistence)
 // ============================================================================
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+/**
+ * TP message as stored in tp_messages table
+ */
 export interface TPMessage {
   id: string;
+  session_id: string;
   role: MessageRole;
   content: string;
-  timestamp: string;
+  tool_calls?: TPToolCall[];
+  work_output_ids?: string[];
+  created_at: string;
+}
 
-  // TP assistant messages may include actions taken
-  actionsTaken?: string[];
+/**
+ * Tool call record for display
+ */
+export interface TPToolCall {
+  name: string;
+  input: Record<string, unknown>;
+  result?: Record<string, unknown>;
+}
 
-  // TP may emit work outputs inline
-  workOutputs?: WorkOutput[];
-
-  // User messages may trigger state changes
-  triggeredPhase?: TPPhase;
+/**
+ * Context change record for display
+ */
+export interface TPContextChange {
+  item_type: string;
+  action: 'written' | 'proposed' | 'unknown';
 }
 
 // ============================================================================
-// API Request/Response Types
+// API Request/Response Types (v2.0)
 // ============================================================================
 
+/**
+ * Request to send a chat message
+ */
 export interface TPChatRequest {
   basket_id: string;
   message: string;
-  claude_session_id?: string | null;
+  session_id?: string | null;
 }
 
+/**
+ * Response from TP chat
+ */
 export interface TPChatResponse {
   message: string;
-  claude_session_id: string | null;
-  session_id?: string | null;
+  session_id: string;
+  message_id: string;
+  tool_calls: TPToolCall[];
   work_outputs: WorkOutput[];
-  actions_taken: string[];
+  context_changes: TPContextChange[];
 }
 
+/**
+ * TP Session (from tp_sessions table)
+ */
 export interface TPSession {
-  session_id: string;
-  claude_session_id?: string;
+  id: string;
   basket_id: string;
   workspace_id: string;
-  user_id: string;
+  title?: string;
+  summary?: string;
+  status: 'active' | 'archived' | 'expired';
+  message_count: number;
+  last_message_at?: string;
   created_at: string;
   updated_at: string;
-  metadata?: Record<string, any>;
+}
+
+/**
+ * Session with messages included
+ */
+export interface TPSessionWithMessages extends TPSession {
+  messages: TPMessage[];
+}
+
+/**
+ * Request to create a new session
+ */
+export interface TPSessionCreateRequest {
+  basket_id: string;
+  title?: string;
+}
+
+// ============================================================================
+// TP Capabilities
+// ============================================================================
+
+export interface TPCapabilities {
+  description: string;
+  status: 'active' | 'disabled' | 'migration';
+  features: {
+    chat: { enabled: boolean; streaming: boolean; description: string };
+    context_management: { enabled: boolean; tools: string[]; description: string };
+    work_orchestration: { enabled: boolean; tools: string[]; description: string };
+    governance: { enabled: boolean; description: string };
+    session_persistence: { enabled: boolean; description: string };
+  };
+  context_tiers: {
+    foundation: { types: string[]; governance: string };
+    working: { types: string[]; governance: string };
+    ephemeral: { types: string[]; governance: string };
+  };
 }
 
 // ============================================================================
@@ -159,5 +224,24 @@ export interface ChatState {
   isLoading: boolean;
   error?: string;
   sessionId?: string | null;
-  claudeSessionId?: string | null;
+}
+
+// ============================================================================
+// Legacy Types (backward compatibility)
+// ============================================================================
+
+/** @deprecated Use TPChatRequest with session_id instead */
+export interface LegacyTPChatRequest {
+  basket_id: string;
+  message: string;
+  claude_session_id?: string | null;
+}
+
+/** @deprecated Use TPChatResponse with session_id instead */
+export interface LegacyTPChatResponse {
+  message: string;
+  claude_session_id: string | null;
+  session_id?: string | null;
+  work_outputs: WorkOutput[];
+  actions_taken: string[];
 }

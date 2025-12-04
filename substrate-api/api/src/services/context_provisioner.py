@@ -4,6 +4,12 @@ Context Provisioner - Fetch structured context for recipe execution.
 This service provides context items to agents/recipes before execution.
 It bridges the gap between context_items table and agent prompt construction.
 
+v3.0 Terminology:
+- item_type: Type of context item (replaces anchor_role)
+- item_key: Optional key for non-singleton types (replaces entry_key)
+- content: Structured JSONB data (replaces data)
+- tier: Governance tier (foundation, working, ephemeral)
+
 Canon Compliance:
 - Context items are CONSUMED, not created by this service
 - Agents receive pre-fetched context for prompts

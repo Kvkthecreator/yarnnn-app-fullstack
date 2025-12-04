@@ -1,4 +1,4 @@
-\restrict v7Bz7t7hFelXGs59HAMcVX4m4d9gOnnFkcww8C5uqkpwu21mcjPQ11SwVj4skHa
+\restrict tTjlXhVBrn2P7gPHQnV1oj8XtPfWWgwbaIpUf91u8ZbpgctEGEbLCHg5XwwYMee
 CREATE SCHEMA public;
 CREATE TYPE public.alert_severity AS ENUM (
     'info',
@@ -261,7 +261,8 @@ BEGIN
       ps.day_of_week,
       ps.time_of_day,
       wr.slug as recipe_slug,
-      wr.context_outputs
+      wr.context_outputs,
+      wr.context_requirements
     FROM project_schedules ps
     JOIN work_recipes wr ON wr.id = ps.recipe_id
     WHERE ps.enabled = true
@@ -276,6 +277,7 @@ BEGIN
     FOR UPDATE OF ps SKIP LOCKED
   LOOP
     -- Create job for this schedule
+    -- Include context_required from recipe's context_requirements.roles
     INSERT INTO jobs (
       job_type,
       payload,
@@ -291,6 +293,7 @@ BEGIN
         'basket_id', v_schedule.basket_id,
         'recipe_parameters', v_schedule.recipe_parameters,
         'context_outputs', v_schedule.context_outputs,
+        'context_required', COALESCE(v_schedule.context_requirements->'roles', '[]'::jsonb),
         'triggered_at', NOW()
       ),
       5,  -- Default priority
@@ -330,7 +333,8 @@ BEGIN
       b.anchor_role,
       wr.id as recipe_id,
       wr.slug as recipe_slug,
-      wr.context_outputs
+      wr.context_outputs,
+      wr.context_requirements
     FROM blocks b
     JOIN work_recipes wr ON wr.context_outputs->>'role' = b.anchor_role
     WHERE b.anchor_role IS NOT NULL
@@ -349,7 +353,7 @@ BEGIN
     )
     FOR UPDATE OF b SKIP LOCKED
   LOOP
-    -- Create refresh job
+    -- Create refresh job with context_required from producing recipe
     INSERT INTO jobs (
       job_type,
       payload,
@@ -363,6 +367,7 @@ BEGIN
         'recipe_id', v_stale.recipe_id,
         'recipe_slug', v_stale.recipe_slug,
         'context_outputs', v_stale.context_outputs,
+        'context_required', COALESCE(v_stale.context_requirements->'roles', '[]'::jsonb),
         'triggered_at', NOW()
       ),
       3  -- Lower priority than user-initiated
@@ -572,6 +577,20 @@ BEGIN
   WHERE id = ANY(deleted_ids);
   deleted_count := array_length(deleted_ids, 1);
   RETURN QUERY SELECT COALESCE(deleted_count, 0);
+END;
+$$;
+CREATE FUNCTION public.cleanup_expired_context_items() RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM context_items
+    WHERE tier = 'ephemeral'
+      AND expires_at IS NOT NULL
+      AND expires_at < now();
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
 END;
 $$;
 CREATE FUNCTION public.cleanup_expired_mcp_sessions() RETURNS integer
@@ -2669,6 +2688,14 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+CREATE FUNCTION public.update_context_item_timestamp() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
 CREATE FUNCTION public.update_jobs_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -2731,6 +2758,19 @@ CREATE FUNCTION public.update_substrate_relationships_updated_at() RETURNS trigg
     AS $$
 BEGIN
     NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+CREATE FUNCTION public.update_tp_session_stats() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE tp_sessions
+    SET
+        message_count = message_count + 1,
+        last_message_at = NEW.created_at,
+        updated_at = now()
+    WHERE id = NEW.session_id;
     RETURN NEW;
 END;
 $$;
@@ -3085,21 +3125,6 @@ CASE
 END) STORED,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
-CREATE TABLE public.context_entries (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    basket_id uuid NOT NULL,
-    anchor_role text NOT NULL,
-    entry_key text,
-    display_name text,
-    data jsonb DEFAULT '{}'::jsonb NOT NULL,
-    completeness_score double precision,
-    state text DEFAULT 'active'::text,
-    refresh_policy jsonb,
-    created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now(),
-    created_by uuid,
-    CONSTRAINT context_entries_state_check CHECK ((state = ANY (ARRAY['active'::text, 'archived'::text])))
-);
 CREATE TABLE public.context_entry_schemas (
     anchor_role text NOT NULL,
     display_name text NOT NULL,
@@ -3116,13 +3141,28 @@ CREATE TABLE public.context_entry_schemas (
 CREATE TABLE public.context_items (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     basket_id uuid NOT NULL,
-    type text NOT NULL,
-    content text,
-    scope text DEFAULT 'project'::text,
+    tier text NOT NULL,
+    item_type text NOT NULL,
+    item_key text,
+    title text,
+    content jsonb DEFAULT '{}'::jsonb NOT NULL,
+    schema_id text,
+    asset_ids uuid[] DEFAULT '{}'::uuid[],
+    tags text[] DEFAULT '{}'::text[],
+    embedding public.vector(1536),
+    created_by text NOT NULL,
+    updated_by text,
     status text DEFAULT 'active'::text,
-    metadata jsonb DEFAULT '{}'::jsonb,
+    expires_at timestamp with time zone,
+    version integer DEFAULT 1,
+    previous_version_id uuid,
+    source_type text,
+    source_ref jsonb,
+    completeness_score double precision,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now()
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT context_items_status_check CHECK ((status = ANY (ARRAY['active'::text, 'archived'::text, 'superseded'::text]))),
+    CONSTRAINT context_items_tier_check CHECK ((tier = ANY (ARRAY['foundation'::text, 'working'::text, 'ephemeral'::text])))
 );
 CREATE TABLE public.document_context_items (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
@@ -3566,8 +3606,8 @@ CREATE TABLE public.reference_assets (
     classification_confidence double precision,
     classified_at timestamp with time zone,
     classification_metadata jsonb DEFAULT '{}'::jsonb,
-    context_entry_id uuid,
     context_field_key text,
+    context_item_id uuid,
     CONSTRAINT access_count_non_negative CHECK ((access_count >= 0)),
     CONSTRAINT expires_at_future CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
     CONSTRAINT file_size_positive CHECK (((file_size_bytes IS NULL) OR (file_size_bytes > 0))),
@@ -3681,6 +3721,38 @@ CREATE SEQUENCE public.timeline_events_id_seq
     NO MAXVALUE
     CACHE 1;
 ALTER SEQUENCE public.timeline_events_id_seq OWNED BY public.timeline_events.id;
+CREATE TABLE public.tp_messages (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    basket_id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    role text NOT NULL,
+    content text NOT NULL,
+    work_output_ids uuid[] DEFAULT '{}'::uuid[],
+    tool_calls jsonb DEFAULT '[]'::jsonb,
+    model text,
+    input_tokens integer,
+    output_tokens integer,
+    tp_phase text,
+    context_snapshot jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    user_id uuid,
+    CONSTRAINT tp_messages_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text])))
+);
+CREATE TABLE public.tp_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    basket_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    title text,
+    summary text,
+    status text DEFAULT 'active'::text,
+    message_count integer DEFAULT 0,
+    last_message_at timestamp with time zone,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_user_id uuid,
+    CONSTRAINT tp_sessions_status_check CHECK ((status = ANY (ARRAY['active'::text, 'archived'::text, 'expired'::text])))
+);
 CREATE TABLE public.user_agent_subscriptions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -4011,12 +4083,10 @@ ALTER TABLE ONLY public.block_usage
     ADD CONSTRAINT block_usage_pkey PRIMARY KEY (block_id);
 ALTER TABLE ONLY public.blocks
     ADD CONSTRAINT blocks_pkey PRIMARY KEY (id);
-ALTER TABLE ONLY public.context_entries
-    ADD CONSTRAINT context_entries_basket_id_anchor_role_entry_key_key UNIQUE (basket_id, anchor_role, entry_key);
-ALTER TABLE ONLY public.context_entries
-    ADD CONSTRAINT context_entries_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.context_entry_schemas
     ADD CONSTRAINT context_entry_schemas_pkey PRIMARY KEY (anchor_role);
+ALTER TABLE ONLY public.context_items
+    ADD CONSTRAINT context_items_basket_id_item_type_item_key_key UNIQUE (basket_id, item_type, item_key);
 ALTER TABLE ONLY public.context_items
     ADD CONSTRAINT context_items_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.document_context_items
@@ -4093,6 +4163,10 @@ ALTER TABLE ONLY public.substrate_tombstones
     ADD CONSTRAINT substrate_tombstones_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.timeline_events
     ADD CONSTRAINT timeline_events_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.tp_messages
+    ADD CONSTRAINT tp_messages_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.tp_sessions
+    ADD CONSTRAINT tp_sessions_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.user_agent_subscriptions
     ADD CONSTRAINT unique_active_subscription UNIQUE (user_id, workspace_id, agent_type, status) DEFERRABLE INITIALLY DEFERRED;
 ALTER TABLE ONLY public.project_agents
@@ -4201,13 +4275,12 @@ CREATE INDEX idx_blocks_version_chain ON public.blocks USING btree (parent_block
 CREATE INDEX idx_blocks_workspace ON public.blocks USING btree (workspace_id);
 CREATE INDEX idx_blocks_workspace_id ON public.blocks USING btree (workspace_id);
 CREATE INDEX idx_blocks_workspace_scope ON public.blocks USING btree (workspace_id, scope, state) WHERE (scope IS NOT NULL);
-CREATE INDEX idx_context_entries_basket_role ON public.context_entries USING btree (basket_id, anchor_role);
-CREATE INDEX idx_context_entries_data ON public.context_entries USING gin (data);
-CREATE INDEX idx_context_entries_state ON public.context_entries USING btree (basket_id, state) WHERE (state = 'active'::text);
-CREATE INDEX idx_context_entries_updated ON public.context_entries USING btree (basket_id, updated_at DESC);
-CREATE INDEX idx_context_items_basket ON public.context_items USING btree (basket_id);
-CREATE INDEX idx_context_items_basket_id ON public.context_items USING btree (basket_id);
-CREATE INDEX idx_context_items_status ON public.context_items USING btree (status);
+CREATE INDEX idx_context_items_active ON public.context_items USING btree (basket_id) WHERE (status = 'active'::text);
+CREATE INDEX idx_context_items_basket_tier ON public.context_items USING btree (basket_id, tier);
+CREATE INDEX idx_context_items_expires ON public.context_items USING btree (expires_at) WHERE (expires_at IS NOT NULL);
+CREATE INDEX idx_context_items_schema ON public.context_items USING btree (schema_id) WHERE (schema_id IS NOT NULL);
+CREATE INDEX idx_context_items_tags ON public.context_items USING gin (tags);
+CREATE INDEX idx_context_items_type ON public.context_items USING btree (basket_id, item_type);
 CREATE INDEX idx_doc_versions_signature ON public.document_versions USING btree (composition_signature) WHERE (composition_signature IS NOT NULL);
 CREATE INDEX idx_document_versions_created ON public.document_versions USING btree (created_at DESC);
 CREATE INDEX idx_document_versions_document ON public.document_versions USING btree (document_id);
@@ -4290,7 +4363,7 @@ CREATE INDEX idx_raw_dumps_workspace_id ON public.raw_dumps USING btree (workspa
 CREATE INDEX idx_rawdump_doc ON public.raw_dumps USING btree (document_id);
 CREATE INDEX idx_ref_assets_basket ON public.reference_assets USING btree (basket_id, created_at DESC);
 CREATE INDEX idx_ref_assets_category ON public.reference_assets USING btree (asset_category, basket_id);
-CREATE INDEX idx_ref_assets_context_entry ON public.reference_assets USING btree (context_entry_id, context_field_key) WHERE (context_entry_id IS NOT NULL);
+CREATE INDEX idx_ref_assets_context_item ON public.reference_assets USING btree (context_item_id, context_field_key) WHERE (context_item_id IS NOT NULL);
 CREATE INDEX idx_ref_assets_embedding ON public.reference_assets USING ivfflat (description_embedding public.vector_cosine_ops) WITH (lists='100') WHERE (description_embedding IS NOT NULL);
 CREATE INDEX idx_ref_assets_expired ON public.reference_assets USING btree (expires_at) WHERE ((permanence = 'temporary'::text) AND (expires_at IS NOT NULL));
 CREATE INDEX idx_ref_assets_metadata ON public.reference_assets USING gin (metadata);
@@ -4318,6 +4391,13 @@ CREATE INDEX idx_timeline_events_basket_timestamp_id ON public.timeline_events U
 CREATE INDEX idx_timeline_events_kind_ref_id ON public.timeline_events USING btree (kind, ref_id) WHERE (ref_id IS NOT NULL);
 CREATE INDEX idx_timeline_workspace_ts ON public.timeline_events USING btree (workspace_id, ts DESC, id DESC);
 CREATE INDEX idx_tombstones_lookup ON public.substrate_tombstones USING btree (workspace_id, basket_id, substrate_type, substrate_id);
+CREATE INDEX idx_tp_messages_basket_session ON public.tp_messages USING btree (basket_id, session_id);
+CREATE INDEX idx_tp_messages_session_created ON public.tp_messages USING btree (session_id, created_at);
+CREATE INDEX idx_tp_messages_user ON public.tp_messages USING btree (user_id);
+CREATE INDEX idx_tp_sessions_basket ON public.tp_sessions USING btree (basket_id);
+CREATE INDEX idx_tp_sessions_status ON public.tp_sessions USING btree (status) WHERE (status = 'active'::text);
+CREATE INDEX idx_tp_sessions_user ON public.tp_sessions USING btree (created_by_user_id);
+CREATE INDEX idx_tp_sessions_workspace ON public.tp_sessions USING btree (workspace_id);
 CREATE INDEX idx_user_alerts_actionable ON public.user_alerts USING btree (user_id, actionable, created_at DESC) WHERE (dismissed_at IS NULL);
 CREATE INDEX idx_user_alerts_user_active ON public.user_alerts USING btree (user_id, created_at DESC) WHERE (dismissed_at IS NULL);
 CREATE INDEX idx_user_alerts_workspace_active ON public.user_alerts USING btree (workspace_id, created_at DESC) WHERE (dismissed_at IS NULL);
@@ -4396,12 +4476,13 @@ CREATE TRIGGER set_updated_at_subscriptions BEFORE UPDATE ON public.user_agent_s
 CREATE TRIGGER sync_text_dump_columns BEFORE UPDATE ON public.raw_dumps FOR EACH ROW EXECUTE FUNCTION public.sync_raw_dump_text_columns();
 CREATE TRIGGER trg_block_depth BEFORE INSERT OR UPDATE ON public.blocks FOR EACH ROW EXECUTE FUNCTION public.check_block_depth();
 CREATE TRIGGER trg_capture_config_change AFTER UPDATE ON public.project_agents FOR EACH ROW WHEN ((old.config IS DISTINCT FROM new.config)) EXECUTE FUNCTION public.capture_agent_config_change();
-CREATE TRIGGER trg_context_entries_updated_at BEFORE UPDATE ON public.context_entries FOR EACH ROW EXECUTE FUNCTION public.update_context_entry_timestamp();
 CREATE TRIGGER trg_context_entry_schemas_updated_at BEFORE UPDATE ON public.context_entry_schemas FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+CREATE TRIGGER trg_context_items_updated_at BEFORE UPDATE ON public.context_items FOR EACH ROW EXECUTE FUNCTION public.update_context_item_timestamp();
 CREATE TRIGGER trg_jobs_updated_at BEFORE UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.update_jobs_updated_at();
 CREATE TRIGGER trg_lock_constant BEFORE INSERT OR UPDATE ON public.blocks FOR EACH ROW EXECUTE FUNCTION public.prevent_lock_vs_constant();
 CREATE TRIGGER trg_set_basket_user_id BEFORE INSERT ON public.baskets FOR EACH ROW EXECUTE FUNCTION public.set_basket_user_id();
 CREATE TRIGGER trg_timeline_after_raw_dump AFTER INSERT ON public.raw_dumps FOR EACH ROW EXECUTE FUNCTION public.fn_timeline_after_raw_dump();
+CREATE TRIGGER trg_tp_message_insert AFTER INSERT ON public.tp_messages FOR EACH ROW EXECUTE FUNCTION public.update_tp_session_stats();
 CREATE TRIGGER trg_update_asset_type_catalog_updated_at BEFORE UPDATE ON public.asset_type_catalog FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER trg_update_output_type_catalog_updated_at BEFORE UPDATE ON public.output_type_catalog FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER trg_update_reference_assets_updated_at BEFORE UPDATE ON public.reference_assets FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
@@ -4415,7 +4496,6 @@ CREATE TRIGGER trigger_update_work_tickets_timestamp BEFORE UPDATE ON public.wor
 CREATE TRIGGER update_baskets_updated_at BEFORE UPDATE ON public.baskets FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_block_change_queue_updated_at BEFORE UPDATE ON public.block_change_queue FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_blocks_updated_at BEFORE UPDATE ON public.blocks FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
-CREATE TRIGGER update_context_items_updated_at BEFORE UPDATE ON public.context_items FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON public.documents FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_projects_updated_at BEFORE UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_raw_dumps_updated_at BEFORE UPDATE ON public.raw_dumps FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
@@ -4485,14 +4565,12 @@ ALTER TABLE ONLY public.blocks
     ADD CONSTRAINT blocks_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES public.proposals(id);
 ALTER TABLE ONLY public.blocks
     ADD CONSTRAINT blocks_raw_dump_id_fkey FOREIGN KEY (raw_dump_id) REFERENCES public.raw_dumps(id);
-ALTER TABLE ONLY public.context_entries
-    ADD CONSTRAINT context_entries_anchor_role_fkey FOREIGN KEY (anchor_role) REFERENCES public.context_entry_schemas(anchor_role);
-ALTER TABLE ONLY public.context_entries
-    ADD CONSTRAINT context_entries_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.context_entries
-    ADD CONSTRAINT context_entries_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id);
 ALTER TABLE ONLY public.context_items
     ADD CONSTRAINT context_items_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.context_items
+    ADD CONSTRAINT context_items_previous_version_id_fkey FOREIGN KEY (previous_version_id) REFERENCES public.context_items(id);
+ALTER TABLE ONLY public.context_items
+    ADD CONSTRAINT context_items_schema_id_fkey FOREIGN KEY (schema_id) REFERENCES public.context_entry_schemas(anchor_role);
 ALTER TABLE ONLY public.document_context_items
     ADD CONSTRAINT document_context_items_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.document_versions
@@ -4531,6 +4609,8 @@ ALTER TABLE ONLY public.raw_dumps
     ADD CONSTRAINT fk_rawdump_document FOREIGN KEY (document_id) REFERENCES public.documents(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.raw_dumps
     ADD CONSTRAINT fk_rawdump_workspace FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.tp_messages
+    ADD CONSTRAINT fk_tp_messages_session FOREIGN KEY (session_id) REFERENCES public.tp_sessions(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.integration_tokens
     ADD CONSTRAINT integration_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.integration_tokens
@@ -4598,7 +4678,7 @@ ALTER TABLE ONLY public.proposals
 ALTER TABLE ONLY public.raw_dumps
     ADD CONSTRAINT raw_dumps_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.reference_assets
-    ADD CONSTRAINT ref_assets_context_entry_fk FOREIGN KEY (context_entry_id) REFERENCES public.context_entries(id) ON DELETE SET NULL;
+    ADD CONSTRAINT ref_assets_context_item_fk FOREIGN KEY (context_item_id) REFERENCES public.context_items(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.reference_assets
     ADD CONSTRAINT reference_assets_asset_type_fkey FOREIGN KEY (asset_type) REFERENCES public.asset_type_catalog(asset_type);
 ALTER TABLE ONLY public.reference_assets
@@ -4625,6 +4705,16 @@ ALTER TABLE ONLY public.timeline_events
     ADD CONSTRAINT timeline_events_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.timeline_events
     ADD CONSTRAINT timeline_events_workspace_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.tp_messages
+    ADD CONSTRAINT tp_messages_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.tp_messages
+    ADD CONSTRAINT tp_messages_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.tp_sessions
+    ADD CONSTRAINT tp_sessions_basket_id_fkey FOREIGN KEY (basket_id) REFERENCES public.baskets(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.tp_sessions
+    ADD CONSTRAINT tp_sessions_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.tp_sessions
+    ADD CONSTRAINT tp_sessions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.user_agent_subscriptions
     ADD CONSTRAINT user_agent_subscriptions_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.user_alerts
@@ -4706,6 +4796,9 @@ CREATE POLICY "Service role has full access to project_agents" ON public.project
 CREATE POLICY "Service role has full access to projects" ON public.projects TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Service role has full access to reference_assets" ON public.reference_assets TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Service role has full access to work_outputs" ON public.work_outputs TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Users can create TP sessions in their workspace" ON public.tp_sessions FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM public.workspace_memberships wm
+  WHERE ((wm.workspace_id = tp_sessions.workspace_id) AND (wm.user_id = auth.uid())))));
 CREATE POLICY "Users can create agent sessions in their workspaces" ON public.agent_sessions FOR INSERT WITH CHECK (((workspace_id IN ( SELECT workspace_memberships.workspace_id
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid()))) AND (created_by_user_id = auth.uid())));
@@ -4722,6 +4815,10 @@ CREATE POLICY "Users can create iterations in their workspace tickets" ON public
   WHERE (work_tickets.workspace_id IN ( SELECT workspace_memberships.workspace_id
            FROM public.workspace_memberships
           WHERE (workspace_memberships.user_id = auth.uid()))))));
+CREATE POLICY "Users can create messages in their sessions" ON public.tp_messages FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM (public.tp_sessions ts
+     JOIN public.workspace_memberships wm ON ((wm.workspace_id = ts.workspace_id)))
+  WHERE ((ts.id = tp_messages.session_id) AND (wm.user_id = auth.uid())))));
 CREATE POLICY "Users can create outputs in their workspace" ON public.work_outputs FOR INSERT TO authenticated WITH CHECK ((basket_id IN ( SELECT b.id
    FROM (public.baskets b
      JOIN public.workspace_memberships wm ON ((wm.workspace_id = b.workspace_id)))
@@ -4862,6 +4959,9 @@ CREATE POLICY "Users can update their queued items" ON public.agent_processing_q
   WHERE (workspace_memberships.user_id = auth.uid())))) WITH CHECK ((workspace_id IN ( SELECT workspace_memberships.workspace_id
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid()))));
+CREATE POLICY "Users can update their workspace's TP sessions" ON public.tp_sessions FOR UPDATE USING ((EXISTS ( SELECT 1
+   FROM public.workspace_memberships wm
+  WHERE ((wm.workspace_id = tp_sessions.workspace_id) AND (wm.user_id = auth.uid())))));
 CREATE POLICY "Users can update work tickets in their workspaces" ON public.work_tickets FOR UPDATE USING ((workspace_id IN ( SELECT workspace_memberships.workspace_id
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid()))));
@@ -4910,6 +5010,10 @@ CREATE POLICY "Users can view iterations in their workspace tickets" ON public.w
   WHERE (work_tickets.workspace_id IN ( SELECT workspace_memberships.workspace_id
            FROM public.workspace_memberships
           WHERE (workspace_memberships.user_id = auth.uid()))))));
+CREATE POLICY "Users can view messages in their sessions" ON public.tp_messages FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM (public.tp_sessions ts
+     JOIN public.workspace_memberships wm ON ((wm.workspace_id = ts.workspace_id)))
+  WHERE ((ts.id = tp_messages.session_id) AND (wm.user_id = auth.uid())))));
 CREATE POLICY "Users can view narrative in their workspace" ON public.narrative FOR SELECT USING ((EXISTS ( SELECT 1
    FROM public.baskets
   WHERE ((baskets.id = narrative.basket_id) AND (baskets.workspace_id IN ( SELECT workspace_memberships.workspace_id
@@ -4958,6 +5062,9 @@ CREATE POLICY "Users can view their project jobs" ON public.jobs FOR SELECT TO a
 CREATE POLICY "Users can view their workspace integration tokens" ON public.integration_tokens FOR SELECT TO authenticated USING ((workspace_id IN ( SELECT workspace_memberships.workspace_id
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid()))));
+CREATE POLICY "Users can view their workspace's TP sessions" ON public.tp_sessions FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM public.workspace_memberships wm
+  WHERE ((wm.workspace_id = tp_sessions.workspace_id) AND (wm.user_id = auth.uid())))));
 CREATE POLICY "Users can view work requests in their workspaces" ON public.work_requests FOR SELECT USING ((workspace_id IN ( SELECT workspace_memberships.workspace_id
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid()))));
@@ -5053,31 +5160,31 @@ CREATE POLICY br_select_workspace_member ON public.reflections_artifact FOR SELE
    FROM (public.baskets b
      JOIN public.workspace_memberships wm ON ((wm.workspace_id = b.workspace_id)))
   WHERE ((b.id = reflections_artifact.basket_id) AND (wm.user_id = auth.uid())))));
-ALTER TABLE public.context_entries ENABLE ROW LEVEL SECURITY;
-CREATE POLICY context_entries_delete_workspace_members ON public.context_entries FOR DELETE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM ((public.baskets b
-     JOIN public.projects p ON ((p.basket_id = b.id)))
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
-  WHERE ((b.id = context_entries.basket_id) AND (wm.user_id = auth.uid())))));
-CREATE POLICY context_entries_insert_workspace_members ON public.context_entries FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1
-   FROM ((public.baskets b
-     JOIN public.projects p ON ((p.basket_id = b.id)))
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
-  WHERE ((b.id = context_entries.basket_id) AND (wm.user_id = auth.uid())))));
-CREATE POLICY context_entries_select_workspace_members ON public.context_entries FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
-   FROM ((public.baskets b
-     JOIN public.projects p ON ((p.basket_id = b.id)))
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
-  WHERE ((b.id = context_entries.basket_id) AND (wm.user_id = auth.uid())))));
-CREATE POLICY context_entries_service_role ON public.context_entries TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY context_entries_update_workspace_members ON public.context_entries FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
-   FROM ((public.baskets b
-     JOIN public.projects p ON ((p.basket_id = b.id)))
-     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
-  WHERE ((b.id = context_entries.basket_id) AND (wm.user_id = auth.uid())))));
 ALTER TABLE public.context_entry_schemas ENABLE ROW LEVEL SECURITY;
 CREATE POLICY context_entry_schemas_select_authenticated ON public.context_entry_schemas FOR SELECT TO authenticated USING (true);
 CREATE POLICY context_entry_schemas_service_role ON public.context_entry_schemas TO service_role USING (true) WITH CHECK (true);
+ALTER TABLE public.context_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY context_items_delete_workspace_members ON public.context_items FOR DELETE TO authenticated USING ((EXISTS ( SELECT 1
+   FROM ((public.baskets b
+     JOIN public.projects p ON ((p.basket_id = b.id)))
+     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
+  WHERE ((b.id = context_items.basket_id) AND (wm.user_id = auth.uid())))));
+CREATE POLICY context_items_insert_workspace_members ON public.context_items FOR INSERT TO authenticated WITH CHECK ((EXISTS ( SELECT 1
+   FROM ((public.baskets b
+     JOIN public.projects p ON ((p.basket_id = b.id)))
+     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
+  WHERE ((b.id = context_items.basket_id) AND (wm.user_id = auth.uid())))));
+CREATE POLICY context_items_select_workspace_members ON public.context_items FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1
+   FROM ((public.baskets b
+     JOIN public.projects p ON ((p.basket_id = b.id)))
+     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
+  WHERE ((b.id = context_items.basket_id) AND (wm.user_id = auth.uid())))));
+CREATE POLICY context_items_service_role ON public.context_items TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY context_items_update_workspace_members ON public.context_items FOR UPDATE TO authenticated USING ((EXISTS ( SELECT 1
+   FROM ((public.baskets b
+     JOIN public.projects p ON ((p.basket_id = b.id)))
+     JOIN public.workspace_memberships wm ON ((wm.workspace_id = p.workspace_id)))
+  WHERE ((b.id = context_items.basket_id) AND (wm.user_id = auth.uid())))));
 CREATE POLICY "debug insert bypass" ON public.workspaces FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "delete history by service role" ON public.timeline_events FOR DELETE USING ((auth.role() = 'service_role'::text));
 CREATE POLICY "delete reflections by service role" ON public.reflections_artifact FOR DELETE USING ((auth.role() = 'service_role'::text));
@@ -5302,6 +5409,8 @@ CREATE POLICY "timeline read: workspace member" ON public.timeline_events FOR SE
      JOIN public.workspace_memberships m ON ((m.workspace_id = b.workspace_id)))
   WHERE ((b.id = timeline_events.basket_id) AND (m.user_id = auth.uid())))));
 ALTER TABLE public.timeline_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tp_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tp_sessions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "update history by service role" ON public.timeline_events FOR UPDATE USING ((auth.role() = 'service_role'::text)) WITH CHECK ((auth.role() = 'service_role'::text));
 CREATE POLICY "update reflections by service role" ON public.reflections_artifact FOR UPDATE USING ((auth.role() = 'service_role'::text)) WITH CHECK ((auth.role() = 'service_role'::text));
 ALTER TABLE public.user_agent_subscriptions ENABLE ROW LEVEL SECURITY;
@@ -5338,4 +5447,4 @@ CREATE POLICY ws_owner_or_member_read ON public.workspaces FOR SELECT USING (((o
    FROM public.workspace_memberships
   WHERE (workspace_memberships.user_id = auth.uid())))));
 CREATE POLICY ws_owner_update ON public.workspaces FOR UPDATE USING ((owner_id = auth.uid()));
-\unrestrict v7Bz7t7hFelXGs59HAMcVX4m4d9gOnnFkcww8C5uqkpwu21mcjPQ11SwVj4skHa
+\unrestrict tTjlXhVBrn2P7gPHQnV1oj8XtPfWWgwbaIpUf91u8ZbpgctEGEbLCHg5XwwYMee

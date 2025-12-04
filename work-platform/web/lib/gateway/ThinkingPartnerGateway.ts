@@ -1,8 +1,10 @@
 /**
- * Thinking Partner Gateway
+ * Thinking Partner Gateway (v2.0)
  *
  * Centralized orchestration layer for TP chat and state management.
- * Handles API calls, session management, and real-time updates.
+ * Updated for session persistence and context management.
+ *
+ * See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
  */
 
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -10,9 +12,12 @@ import type {
   TPChatRequest,
   TPChatResponse,
   TPSession,
+  TPSessionWithMessages,
   TPMessage,
-  TPState,
+  TPContextChange,
+  WorkOutput,
   WorkTicketStatus,
+  TPCapabilities,
 } from '@/lib/types/thinking-partner';
 import { fetchWithToken } from '@/lib/fetchWithToken';
 
@@ -25,8 +30,12 @@ export class ThinkingPartnerGateway {
   private basketId: string;
   private workspaceId: string;
   private sessionId: string | null = null;
-  private claudeSessionId: string | null = null;
   private subscription: RealtimeChannel | null = null;
+
+  // Callbacks
+  private onContextChangeCallback?: (changes: TPContextChange[]) => void;
+  private onWorkOutputCallback?: (outputs: WorkOutput[]) => void;
+  private onMessageCallback?: (message: TPMessage) => void;
 
   constructor(basketId: string, workspaceId: string) {
     this.basketId = basketId;
@@ -40,7 +49,7 @@ export class ThinkingPartnerGateway {
     const request: TPChatRequest = {
       basket_id: this.basketId,
       message,
-      claude_session_id: this.claudeSessionId,
+      session_id: this.sessionId,
     };
 
     const response = await fetchWithToken('/api/tp/chat', {
@@ -49,42 +58,126 @@ export class ThinkingPartnerGateway {
     });
 
     if (!response.ok) {
-      const error = await response.json();
+      const error = await response.json().catch(() => ({}));
       throw new Error(error.detail || 'Failed to chat with Thinking Partner');
     }
 
     const data: TPChatResponse = await response.json();
 
-    // Update session IDs for continuity
-    this.claudeSessionId = data.claude_session_id;
+    // Update session ID for continuity
     if (data.session_id) {
       this.sessionId = data.session_id;
+    }
+
+    // Fire callbacks
+    if (data.context_changes?.length > 0 && this.onContextChangeCallback) {
+      this.onContextChangeCallback(data.context_changes);
+    }
+    if (data.work_outputs?.length > 0 && this.onWorkOutputCallback) {
+      this.onWorkOutputCallback(data.work_outputs);
     }
 
     return data;
   }
 
   /**
-   * Get current session details
+   * List sessions for this basket
    */
-  async getSession(): Promise<TPSession | null> {
-    if (!this.sessionId) {
-      return null;
-    }
+  async listSessions(status: 'active' | 'archived' = 'active', limit = 20): Promise<TPSession[]> {
+    const params = new URLSearchParams({
+      basket_id: this.basketId,
+      status,
+      limit: String(limit),
+    });
 
-    const response = await fetchWithToken(`/api/tp/session/${this.sessionId}`);
+    const response = await fetchWithToken(`/api/tp/sessions?${params}`);
 
     if (!response.ok) {
-      return null;
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Failed to list sessions');
     }
 
     return await response.json();
   }
 
   /**
+   * Get session with messages
+   */
+  async getSession(sessionId?: string): Promise<TPSessionWithMessages | null> {
+    const targetId = sessionId || this.sessionId;
+    if (!targetId) {
+      return null;
+    }
+
+    const response = await fetchWithToken(`/api/tp/sessions/${targetId}`);
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null;
+      }
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Failed to get session');
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Create a new session
+   */
+  async createSession(title?: string): Promise<TPSession> {
+    const response = await fetchWithToken('/api/tp/sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        basket_id: this.basketId,
+        title,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Failed to create session');
+    }
+
+    const session = await response.json();
+    this.sessionId = session.id;
+    return session;
+  }
+
+  /**
+   * Archive a session
+   */
+  async archiveSession(sessionId: string): Promise<void> {
+    const response = await fetchWithToken(`/api/tp/sessions/${sessionId}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || 'Failed to archive session');
+    }
+
+    // Clear session if it was the active one
+    if (this.sessionId === sessionId) {
+      this.sessionId = null;
+    }
+  }
+
+  /**
+   * Resume an existing session
+   */
+  async resumeSession(sessionId: string): Promise<TPSessionWithMessages | null> {
+    const session = await this.getSession(sessionId);
+    if (session) {
+      this.sessionId = sessionId;
+    }
+    return session;
+  }
+
+  /**
    * Get TP capabilities
    */
-  async getCapabilities(): Promise<any> {
+  async getCapabilities(): Promise<TPCapabilities> {
     const response = await fetch('/api/tp/capabilities');
 
     if (!response.ok) {
@@ -95,26 +188,40 @@ export class ThinkingPartnerGateway {
   }
 
   /**
+   * Set callback for context changes
+   */
+  onContextChange(callback: (changes: TPContextChange[]) => void): void {
+    this.onContextChangeCallback = callback;
+  }
+
+  /**
+   * Set callback for work outputs
+   */
+  onWorkOutput(callback: (outputs: WorkOutput[]) => void): void {
+    this.onWorkOutputCallback = callback;
+  }
+
+  /**
+   * Set callback for new messages (for real-time updates)
+   */
+  onMessage(callback: (message: TPMessage) => void): void {
+    this.onMessageCallback = callback;
+  }
+
+  /**
    * Subscribe to work ticket updates (real-time)
    *
    * TODO: Implement Supabase Realtime subscription
-   * For now, return null and use polling in UI
    */
   subscribeToWorkUpdates(
     callback: (update: WorkTicketStatus) => void
   ): RealtimeChannel | null {
     // TODO: Implement Supabase Realtime subscription
-    // This will require:
-    // 1. Initialize Supabase client
-    // 2. Subscribe to work_tickets table
-    // 3. Filter by basket_id
-    // 4. Call callback on updates
-
     return null;
   }
 
   /**
-   * Unsubscribe from work updates
+   * Unsubscribe from all subscriptions
    */
   unsubscribe(): void {
     if (this.subscription) {
@@ -124,20 +231,10 @@ export class ThinkingPartnerGateway {
   }
 
   /**
-   * Get current session IDs
+   * Get current session ID
    */
-  getSessionIds(): { sessionId: string | null; claudeSessionId: string | null } {
-    return {
-      sessionId: this.sessionId,
-      claudeSessionId: this.claudeSessionId,
-    };
-  }
-
-  /**
-   * Resume session with existing claude_session_id
-   */
-  resumeSession(claudeSessionId: string): void {
-    this.claudeSessionId = claudeSessionId;
+  getSessionId(): string | null {
+    return this.sessionId;
   }
 
   /**
@@ -145,7 +242,28 @@ export class ThinkingPartnerGateway {
    */
   clearSession(): void {
     this.sessionId = null;
-    this.claudeSessionId = null;
+  }
+
+  /**
+   * Get basket and workspace IDs
+   */
+  getContext(): { basketId: string; workspaceId: string } {
+    return {
+      basketId: this.basketId,
+      workspaceId: this.workspaceId,
+    };
+  }
+
+  // ============================================================================
+  // Backward Compatibility (deprecated)
+  // ============================================================================
+
+  /** @deprecated Use getSessionId() instead */
+  getSessionIds(): { sessionId: string | null; claudeSessionId: string | null } {
+    return {
+      sessionId: this.sessionId,
+      claudeSessionId: null, // No longer used
+    };
   }
 }
 

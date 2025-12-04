@@ -1,15 +1,17 @@
 'use client';
 
 /**
- * TPMessageList
+ * TPMessageList (v2.0)
  *
  * Displays list of chat messages with TP.
- * Supports markdown rendering, actions taken, and work outputs.
+ * Supports tool calls, context changes, and work outputs.
+ *
+ * See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
  */
 
-import type { TPMessage } from '@/lib/types/thinking-partner';
+import type { TPMessage, TPToolCall } from '@/lib/types/thinking-partner';
 import { cn } from '@/lib/utils';
-import { CheckCircle2, User, Bot } from 'lucide-react';
+import { CheckCircle2, User, Bot, Wrench, FileEdit, ListChecks } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 
 interface TPMessageListProps {
@@ -37,6 +39,9 @@ interface TPMessageCardProps {
 function TPMessageCard({ message }: TPMessageCardProps) {
   const isUser = message.role === 'user';
 
+  // Get timestamp from created_at (v2.0) or timestamp (legacy)
+  const timestamp = message.created_at || (message as { timestamp?: string }).timestamp;
+
   return (
     <div
       className={cn(
@@ -63,41 +68,36 @@ function TPMessageCard({ message }: TPMessageCardProps) {
         {/* Message text */}
         <div className="whitespace-pre-wrap text-sm">{message.content}</div>
 
-        {/* Actions taken (TP only) */}
-        {message.actionsTaken && message.actionsTaken.length > 0 && (
+        {/* Tool calls (v2.0) */}
+        {message.tool_calls && message.tool_calls.length > 0 && (
           <div className="mt-3 space-y-1 border-t border-border/50 pt-3">
             <div className="text-xs font-medium text-muted-foreground">
-              Actions Taken:
+              Tools Used:
             </div>
             <ul className="space-y-1">
-              {message.actionsTaken.map((action, idx) => (
-                <li key={idx} className="flex items-start gap-2 text-xs text-muted-foreground">
-                  <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-green-500" />
-                  <span>{action}</span>
-                </li>
+              {message.tool_calls.map((call, idx) => (
+                <ToolCallPreview key={idx} call={call} />
               ))}
             </ul>
           </div>
         )}
 
-        {/* Work outputs (TP only) */}
-        {message.workOutputs && message.workOutputs.length > 0 && (
+        {/* Work output IDs (v2.0) */}
+        {message.work_output_ids && message.work_output_ids.length > 0 && (
           <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
-            <div className="text-xs font-medium text-muted-foreground">
-              Work Outputs:
-            </div>
-            <div className="space-y-2">
-              {message.workOutputs.map((output) => (
-                <WorkOutputPreview key={output.id} output={output} />
-              ))}
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <FileEdit className="h-3 w-3" />
+              {message.work_output_ids.length} output{message.work_output_ids.length > 1 ? 's' : ''} created
             </div>
           </div>
         )}
 
         {/* Timestamp */}
-        <div className="mt-2 text-xs text-muted-foreground/70">
-          {new Date(message.timestamp).toLocaleTimeString()}
-        </div>
+        {timestamp && (
+          <div className="mt-2 text-xs text-muted-foreground/70">
+            {new Date(timestamp).toLocaleTimeString()}
+          </div>
+        )}
       </div>
 
       {/* Avatar (user) */}
@@ -110,13 +110,66 @@ function TPMessageCard({ message }: TPMessageCardProps) {
   );
 }
 
+interface ToolCallPreviewProps {
+  call: TPToolCall;
+}
+
+function ToolCallPreview({ call }: ToolCallPreviewProps) {
+  // Get tool icon based on name
+  const getToolIcon = (name: string) => {
+    if (name.includes('context')) return <ListChecks className="h-3 w-3" />;
+    if (name.includes('recipe')) return <FileEdit className="h-3 w-3" />;
+    return <Wrench className="h-3 w-3" />;
+  };
+
+  // Format tool result for display
+  const getResultStatus = (result?: Record<string, unknown>) => {
+    if (!result) return null;
+    if (result.success) return { status: 'success', message: result.message as string };
+    if (result.error) return { status: 'error', message: result.error as string };
+    if (result.action === 'proposed') return { status: 'pending', message: 'Awaiting approval' };
+    return null;
+  };
+
+  const resultStatus = getResultStatus(call.result);
+
+  return (
+    <li className="flex items-start gap-2 text-xs text-muted-foreground">
+      {getToolIcon(call.name)}
+      <div className="flex-1">
+        <span className="font-medium">{call.name}</span>
+        {call.input?.item_type && (
+          <span className="ml-1">({call.input.item_type as string})</span>
+        )}
+        {resultStatus && (
+          <span
+            className={cn(
+              'ml-2',
+              resultStatus.status === 'success' && 'text-green-600',
+              resultStatus.status === 'error' && 'text-red-600',
+              resultStatus.status === 'pending' && 'text-amber-600'
+            )}
+          >
+            {resultStatus.status === 'success' && <CheckCircle2 className="inline h-3 w-3 mr-1" />}
+            {resultStatus.message}
+          </span>
+        )}
+      </div>
+    </li>
+  );
+}
+
+// ============================================================================
+// Legacy Support (for backward compatibility)
+// ============================================================================
+
 interface WorkOutputPreviewProps {
   output: {
     id: string;
     outputType: string;
     title: string;
     confidence?: number;
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
   };
 }
 

@@ -79,7 +79,7 @@ from .reference_assets import router as reference_assets_router
 from .work_outputs import router as work_outputs_router
 from .routes.substrate_search import router as substrate_search_router
 from .routes.anchor_seeding import router as anchor_seeding_router
-from .context_entries import router as context_entries_router
+from .context_items import router as context_items_router
 # NOTE: context_templates module removed - superseded by Anchor Seeding
 # See docs/architecture/ANCHOR_SEEDING_ARCHITECTURE.md
 
@@ -189,7 +189,7 @@ routers = (
     work_outputs_router,  # Phase 1 Work Supervision Lifecycle
     substrate_search_router,  # Phase 1 Claude Agent SDK MCP tools
     anchor_seeding_router,  # Anchor Seeding - LLM-generated foundational blocks
-    context_entries_router,  # Context Entries - structured multi-modal context
+    context_items_router,  # Context Items - structured multi-modal context (v3.0)
 )
 
 # Add correlation middleware

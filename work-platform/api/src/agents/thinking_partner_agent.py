@@ -1,27 +1,21 @@
 """
-Thinking Partner Agent - Interactive ideation and brainstorming (SCAFFOLD)
+Thinking Partner Agent - Interactive ideation, context management, and work orchestration.
 
-This is a minimal scaffold for tech stack alignment. Full implementation
-will follow the same patterns as other agents once requirements are finalized.
+Unlike task-oriented agents (research, content), ThinkingPartnerAgent is conversational:
+- Maintains conversation context via session_id
+- Has full taxonomy access (can read/write all context tiers)
+- Can trigger work recipes via work_tickets
+- Foundation tier writes create governance proposals
 
-The ThinkingPartnerAgent differs from other agents:
-- Interactive, conversational flow (not task-based)
-- May require conversation history (different from work-oriented pattern)
-- Real-time collaboration focus
+Tools:
+- read_context: Read any context item
+- write_context: Update context (foundation → governance, working → direct)
+- list_context: List all context items grouped by tier
+- list_recipes: List available work recipes
+- trigger_recipe: Queue a work recipe
+- emit_work_output: Capture insights during conversation
 
-Usage (when implemented):
-    from agents.thinking_partner_agent import ThinkingPartnerAgent
-
-    agent = ThinkingPartnerAgent(
-        basket_id="...",
-        workspace_id="...",
-        work_ticket_id="...",
-        user_id="...",
-    )
-
-    result = await agent.execute(
-        task="Brainstorm product positioning strategies",
-    )
+See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
 """
 
 from __future__ import annotations
@@ -30,192 +24,427 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from .base_agent import BaseAgent, AgentContext
+from .tools.context_tools import CONTEXT_TOOLS, execute_context_tool
+from .tools.recipe_tools import RECIPE_TOOLS, execute_recipe_tool
 from clients.anthropic_client import ExecutionResult
 
 logger = logging.getLogger(__name__)
 
 
-THINKING_PARTNER_SYSTEM_PROMPT = """You are a Thinking Partner Agent - an interactive collaborator for brainstorming and ideation.
+THINKING_PARTNER_SYSTEM_PROMPT = """You are a Thinking Partner Agent - an interactive collaborator for ideation, context management, and work orchestration.
 
-**Your Role:**
-Help users think through problems, explore ideas, and develop strategies through:
-- Socratic questioning
-- Perspective-taking
-- Pattern recognition
-- Creative exploration
+## Your Role
 
-**Interaction Style:**
+You help users:
+1. **Manage Context** - Read, update, and organize their project context
+2. **Ideate & Brainstorm** - Explore ideas through Socratic questioning
+3. **Orchestrate Work** - Trigger research, content, and other work recipes
+4. **Capture Insights** - Document valuable insights as work outputs
+
+## Tools Available
+
+### Context Tools
+- `read_context(item_type)` - Read a context item (problem, customer, vision, brand, competitor, etc.)
+- `write_context(item_type, content)` - Update context. Foundation tier creates governance proposals.
+- `list_context()` - List all context items grouped by tier
+
+### Recipe Tools
+- `list_recipes()` - List available work recipes
+- `trigger_recipe(recipe_slug, parameters)` - Queue a work recipe for execution
+
+### Output Tools
+- `emit_work_output(title, body, output_type)` - Capture insights, recommendations, findings
+
+## Context Tiers
+
+1. **Foundation** (problem, customer, vision, brand)
+   - Stable, user-established context
+   - Your writes create governance proposals for user approval
+
+2. **Working** (competitor, trend_digest, etc.)
+   - Accumulating context from research
+   - Your writes apply directly
+
+3. **Ephemeral** (session-specific)
+   - Temporary context during conversation
+
+## Interaction Style
+
 - Conversational and collaborative
-- Ask probing questions
+- Ask probing questions to understand needs
 - Offer multiple perspectives
-- Build on user ideas
-- Challenge assumptions constructively
+- Suggest relevant recipes when appropriate
+- Capture key insights with emit_work_output
 
-**Output Approach:**
-Unlike task-oriented agents, you engage in dialogue. However, when valuable insights emerge:
-- Capture key insights as work_outputs
-- Document decision points
-- Record action items identified
+## Guidelines
 
-**Tools Available:**
-- emit_work_output: Capture valuable insights, decisions, and action items
-
-NOTE: This is a scaffold implementation. Full interactive capabilities
-will be added in a future iteration.
-"""
+1. **Start by understanding context** - Use list_context to see what's established
+2. **Read before writing** - Check existing content before proposing changes
+3. **Explain governance** - When proposing foundation changes, explain they need approval
+4. **Be proactive** - Suggest recipes that could help
+5. **Capture value** - Use emit_work_output for important insights"""
 
 
 class ThinkingPartnerAgent(BaseAgent):
     """
-    Thinking Partner Agent for interactive ideation and brainstorming.
+    Thinking Partner Agent for interactive ideation and work orchestration.
 
-    SCAFFOLD STATUS: This is a minimal implementation for tech stack alignment.
-    Full implementation requires:
-    - Conversation history management
-    - Real-time streaming collaboration
-    - Interactive questioning flows
-
-    Features (planned):
-    - Socratic questioning
-    - Multi-perspective exploration
-    - Insight capture and synthesis
-    - Decision framework support
+    Unlike task agents, TP is conversational with:
+    - Session persistence via session_id
+    - Full context taxonomy access
+    - Recipe triggering capability
+    - Governance-aware context writes
     """
 
     AGENT_TYPE = "thinking_partner"
     SYSTEM_PROMPT = THINKING_PARTNER_SYSTEM_PROMPT
 
+    def __init__(
+        self,
+        basket_id: str,
+        workspace_id: str,
+        work_ticket_id: Optional[str],  # TP doesn't require a ticket
+        user_id: str,
+        session_id: Optional[str] = None,
+        user_jwt: Optional[str] = None,
+        model: str = "claude-sonnet-4-20250514",
+    ):
+        """
+        Initialize ThinkingPartnerAgent.
+
+        Args:
+            basket_id: Basket ID for context
+            workspace_id: Workspace ID for authorization
+            work_ticket_id: Optional work ticket (TP usually doesn't have one)
+            user_id: User ID for audit trail
+            session_id: TP session ID for tool context
+            user_jwt: Optional user JWT for substrate auth
+            model: Claude model to use
+        """
+        super().__init__(
+            basket_id=basket_id,
+            workspace_id=workspace_id,
+            work_ticket_id=work_ticket_id or "tp_session",  # Fallback for base class
+            user_id=user_id,
+            user_jwt=user_jwt,
+            model=model,
+        )
+        self.session_id = session_id
+
     async def execute(
         self,
-        task: str,
-        thinking_mode: str = "brainstorm",
-        capture_insights: bool = True,
+        message: str,
+        context_prompt: str = "",
         **kwargs,
     ) -> ExecutionResult:
         """
-        Execute thinking partner session.
-
-        SCAFFOLD: Basic implementation that follows task-oriented pattern.
-        Full implementation will support interactive conversation flow.
+        Execute Thinking Partner conversation turn.
 
         Args:
-            task: Topic or problem to explore
-            thinking_mode: Mode of thinking (brainstorm, analyze, challenge, explore)
-            capture_insights: Whether to emit insights as work_outputs
+            message: User's message
+            context_prompt: Pre-built context section (from routes)
             **kwargs: Additional parameters
 
         Returns:
-            ExecutionResult with insights and recommendations
+            ExecutionResult with response and any tool calls/outputs
         """
         logger.info(
-            f"[THINKING_PARTNER] Starting: task='{task[:50]}...', "
-            f"mode={thinking_mode}"
+            f"[THINKING_PARTNER] Processing: message={len(message)} chars, "
+            f"session={self.session_id}"
         )
 
-        # Build context (minimal for thinking partner)
-        context = await self._build_context(
-            task=task,
-            include_prior_outputs=True,
-            include_assets=False,
-            substrate_query=task,
+        # Build minimal context (context is pre-provisioned in routes)
+        context = AgentContext(
+            basket_id=self.basket_id,
+            workspace_id=self.workspace_id,
+            work_ticket_id=self.work_ticket_id or "tp_session",
+            user_id=self.user_id,
+            task=message,
+            agent_type=self.AGENT_TYPE,
+            user_jwt=self.user_jwt,
         )
 
-        # Build thinking prompt
-        thinking_prompt = self._build_thinking_prompt(
-            task=task,
-            context=context,
-            thinking_mode=thinking_mode,
-            capture_insights=capture_insights,
-        )
+        # Build system prompt with context
+        system_prompt = self._build_tp_system_prompt(context_prompt)
 
-        # Select tools
-        tools = ["emit_work_output"] if capture_insights else []
+        # Build tool definitions
+        tools = self._get_tp_tools()
 
-        # Execute
-        result = await self._execute_with_context(
-            user_message=thinking_prompt,
-            context=context,
+        # Execute with Anthropic client
+        result = await self._execute_conversation_turn(
+            system_prompt=system_prompt,
+            user_message=message,
             tools=tools,
         )
 
         logger.info(
             f"[THINKING_PARTNER] Complete: "
-            f"{len(result.work_outputs)} insights captured, "
-            f"{result.input_tokens}+{result.output_tokens} tokens"
+            f"response={len(result.response_text or '')} chars, "
+            f"tool_calls={len(result.tool_calls)}, "
+            f"outputs={len(result.work_outputs)}, "
+            f"tokens={result.input_tokens}+{result.output_tokens}"
         )
 
         return result
 
-    def _build_thinking_prompt(
+    def _build_tp_system_prompt(self, context_prompt: str) -> str:
+        """Build system prompt with context section."""
+        prompt_parts = [self.SYSTEM_PROMPT]
+
+        if context_prompt:
+            prompt_parts.append(f"""
+# Current Context
+
+{context_prompt}
+""")
+
+        return "\n\n".join(prompt_parts)
+
+    def _get_tp_tools(self) -> List[Dict[str, Any]]:
+        """Get all TP tool definitions for Anthropic API."""
+        # Context tools
+        tools = CONTEXT_TOOLS.copy()
+
+        # Recipe tools
+        tools.extend(RECIPE_TOOLS)
+
+        # emit_work_output (from base emit tool)
+        tools.append({
+            "name": "emit_work_output",
+            "description": """Capture and save an insight, finding, or recommendation from the conversation.
+
+Use this when you identify something valuable that should be persisted:
+- Insights realized during discussion
+- Action items identified
+- Recommendations to explore
+- Findings from analysis
+
+The output goes to the user's supervision queue for review.""",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Brief title for the output"
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Full content of the insight/finding/recommendation"
+                    },
+                    "output_type": {
+                        "type": "string",
+                        "enum": ["insight", "finding", "recommendation", "summary"],
+                        "description": "Type of output"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "Confidence level 0-1. Default: 0.8",
+                        "default": 0.8
+                    }
+                },
+                "required": ["title", "body", "output_type"]
+            }
+        })
+
+        return tools
+
+    def _get_tool_context(self) -> Dict[str, Any]:
+        """Get context for tool execution."""
+        return {
+            "basket_id": self.basket_id,
+            "workspace_id": self.workspace_id,
+            "work_ticket_id": self.work_ticket_id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "agent_type": self.AGENT_TYPE,
+            "user_jwt": self.user_jwt,
+        }
+
+    async def _execute_tool(
         self,
-        task: str,
-        context: AgentContext,
-        thinking_mode: str,
-        capture_insights: bool,
-    ) -> str:
+        tool_name: str,
+        tool_input: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
-        Build thinking partner prompt.
+        Execute a tool and return the result.
 
-        Args:
-            task: Topic/problem to explore
-            context: Agent context
-            thinking_mode: Mode of thinking
-            capture_insights: Whether to capture insights
-
-        Returns:
-            Thinking prompt string
+        Routes to appropriate tool handler based on tool name.
         """
-        # Mode-specific instructions
-        mode_instructions = {
-            "brainstorm": "Generate diverse ideas without judgment. Quantity over quality initially.",
-            "analyze": "Break down the problem systematically. Identify root causes and implications.",
-            "challenge": "Play devil's advocate. Question assumptions and explore edge cases.",
-            "explore": "Map the problem space. Identify adjacent areas and connections.",
-        }.get(thinking_mode, "Explore the topic from multiple angles.")
+        context = self._get_tool_context()
 
-        # Prior context
-        prior_context = "No prior exploration available"
-        if context.substrate_blocks:
-            prior_context = "\n".join([
-                f"- {b.get('content', '')[:200]}..."
-                for b in context.substrate_blocks[:3]
-            ])
+        # Context tools
+        if tool_name in ["read_context", "write_context", "list_context"]:
+            return await execute_context_tool(tool_name, tool_input, context)
 
-        capture_instruction = ""
-        if capture_insights:
-            capture_instruction = """
-**Insight Capture:**
-When you identify a valuable insight, decision point, or action item:
-- Use emit_work_output with type "insight" for key realizations
-- Use emit_work_output with type "recommendation" for action items
-- Use emit_work_output with type "finding" for important facts discovered
-"""
+        # Recipe tools
+        if tool_name in ["list_recipes", "trigger_recipe"]:
+            return await execute_recipe_tool(tool_name, tool_input, context)
 
-        return f"""Let's think through: {task}
+        # emit_work_output - use existing implementation
+        if tool_name == "emit_work_output":
+            return await self._emit_work_output(tool_input)
 
-**Thinking Mode:** {thinking_mode}
-{mode_instructions}
+        return {"error": f"Unknown tool: {tool_name}"}
 
-**Prior Context:**
-{prior_context}
-{capture_instruction}
+    async def _emit_work_output(self, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+        """Emit a work output from the conversation."""
+        from app.utils.supabase_client import supabase_admin_client as supabase
 
-**Approach:**
-1. Understand the core question/problem
-2. Explore multiple perspectives
-3. Identify patterns and connections
-4. Surface actionable insights
-5. Suggest next steps
+        try:
+            output_data = {
+                "basket_id": self.basket_id,
+                "work_ticket_id": None,  # TP outputs don't have tickets
+                "agent_type": self.AGENT_TYPE,
+                "title": tool_input.get("title", "Untitled"),
+                "body": tool_input.get("body", ""),
+                "output_type": tool_input.get("output_type", "insight"),
+                "confidence": tool_input.get("confidence", 0.8),
+                "supervision_status": "pending",
+                "metadata": {
+                    "source": "thinking_partner",
+                    "session_id": self.session_id,
+                }
+            }
 
-Begin exploration now. Think step-by-step and capture key insights."""
+            result = supabase.table("work_outputs").insert(output_data).execute()
+
+            if not result.data:
+                return {"error": "Failed to save work output"}
+
+            output_id = result.data[0]["id"]
+            logger.info(f"[TP] Emitted work output {output_id}")
+
+            return {
+                "success": True,
+                "output_id": output_id,
+                "title": tool_input.get("title"),
+                "type": tool_input.get("output_type"),
+                "message": "Output saved and queued for review."
+            }
+
+        except Exception as e:
+            logger.error(f"[TP] emit_work_output error: {e}")
+            return {"error": f"Failed to emit output: {str(e)}"}
+
+    async def _execute_conversation_turn(
+        self,
+        system_prompt: str,
+        user_message: str,
+        tools: List[Dict[str, Any]],
+    ) -> ExecutionResult:
+        """
+        Execute a single conversation turn with tool handling.
+
+        Uses agentic loop to handle tool calls until final response.
+        """
+        import anthropic
+
+        messages = [{"role": "user", "content": user_message}]
+        all_tool_calls = []
+        all_work_outputs = []
+
+        # Create Anthropic client
+        client = anthropic.Anthropic()
+
+        max_iterations = 10
+        iteration = 0
+
+        while iteration < max_iterations:
+            iteration += 1
+
+            # Call Claude
+            response = client.messages.create(
+                model=self.model,
+                max_tokens=4096,
+                system=system_prompt,
+                messages=messages,
+                tools=tools,
+            )
+
+            # Extract response content
+            response_text = ""
+            tool_uses = []
+
+            for block in response.content:
+                if hasattr(block, "text"):
+                    response_text += block.text
+                elif block.type == "tool_use":
+                    tool_uses.append({
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    })
+
+            # If no tool calls, we're done
+            if not tool_uses:
+                return ExecutionResult(
+                    response_text=response_text,
+                    tool_calls=all_tool_calls,
+                    work_outputs=all_work_outputs,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                )
+
+            # Execute tools
+            tool_results = []
+            for tool_use in tool_uses:
+                tool_name = tool_use["name"]
+                tool_input = tool_use["input"]
+
+                logger.info(f"[TP] Executing tool: {tool_name}")
+
+                # Execute tool
+                result = await self._execute_tool(tool_name, tool_input)
+
+                # Track tool call
+                all_tool_calls.append({
+                    "name": tool_name,
+                    "input": tool_input,
+                    "result": result,
+                })
+
+                # Track work outputs from emit_work_output
+                if tool_name == "emit_work_output" and result.get("success"):
+                    all_work_outputs.append({
+                        "id": result.get("output_id"),
+                        "title": tool_input.get("title"),
+                        "type": tool_input.get("output_type"),
+                    })
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use["id"],
+                    "content": str(result),
+                })
+
+            # Add assistant message and tool results to conversation
+            messages.append({
+                "role": "assistant",
+                "content": response.content,
+            })
+            messages.append({
+                "role": "user",
+                "content": tool_results,
+            })
+
+        # Max iterations reached
+        logger.warning(f"[TP] Max iterations ({max_iterations}) reached")
+        return ExecutionResult(
+            response_text="I apologize, but I reached my processing limit. Please try a simpler request.",
+            tool_calls=all_tool_calls,
+            work_outputs=all_work_outputs,
+            input_tokens=0,
+            output_tokens=0,
+        )
 
 
 # Convenience factory function
 def create_thinking_partner_agent(
     basket_id: str,
     workspace_id: str,
-    work_ticket_id: str,
     user_id: str,
+    session_id: Optional[str] = None,
+    work_ticket_id: Optional[str] = None,
     user_jwt: Optional[str] = None,
     **kwargs,
 ) -> ThinkingPartnerAgent:
@@ -225,8 +454,9 @@ def create_thinking_partner_agent(
     Args:
         basket_id: Basket ID
         workspace_id: Workspace ID
-        work_ticket_id: Work ticket ID
         user_id: User ID
+        session_id: Optional TP session ID
+        work_ticket_id: Optional work ticket ID
         user_jwt: Optional user JWT for substrate auth
         **kwargs: Additional arguments
 
@@ -238,6 +468,7 @@ def create_thinking_partner_agent(
         workspace_id=workspace_id,
         work_ticket_id=work_ticket_id,
         user_id=user_id,
+        session_id=session_id,
         user_jwt=user_jwt,
         **kwargs,
     )
