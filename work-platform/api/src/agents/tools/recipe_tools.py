@@ -283,6 +283,7 @@ async def trigger_recipe(
         # Create work ticket
         ticket_data = {
             "basket_id": basket_id,
+            "workspace_id": workspace_id,
             "status": "pending",
             "priority": min(max(priority, 1), 10),
             "source": "thinking_partner",
