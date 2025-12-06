@@ -1,27 +1,16 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "@/components/ui/Button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/DropdownMenu";
-import {
-  Plus,
-  ChevronDown,
-  FileText,
-  FileBox,
-  Image,
-  Clipboard,
-} from "lucide-react";
-import { AddContextModal } from "@/components/context/AddContextModal";
-import AddEntryModal from "./AddEntryModal";
-import UploadAssetModal from "./UploadAssetModal";
+/**
+ * AddContextButton - Placeholder for Phase 2 redesign
+ *
+ * TODO (Phase 2): Redesign context addition flow
+ * - Consider schema-driven entry creation
+ * - Unified asset/content upload experience
+ * - Remove legacy modals approach
+ */
 
-type ModalType = "entry" | "document" | "image" | "paste" | null;
+import { Button } from "@/components/ui/Button";
+import { Plus } from "lucide-react";
 
 interface AddContextButtonProps {
   projectId: string;
@@ -34,79 +23,13 @@ export default function AddContextButton({
   basketId,
   onSuccess,
 }: AddContextButtonProps) {
-  const [activeModal, setActiveModal] = useState<ModalType>(null);
-
-  const handleSuccess = () => {
-    setActiveModal(null);
-    onSuccess?.();
-  };
+  // Phase 2: This will be redesigned with a proper schema-driven approach
+  // For now, the main way to add context is via the schema cards in ContextEntriesPanel
 
   return (
-    <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Add Context
-            <ChevronDown className="h-4 w-4 ml-1.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem onClick={() => setActiveModal("entry")}>
-            <FileText className="h-4 w-4 mr-2" />
-            Add Text Entry
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setActiveModal("document")}>
-            <FileBox className="h-4 w-4 mr-2" />
-            Upload Document
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setActiveModal("image")}>
-            <Image className="h-4 w-4 mr-2" />
-            Upload Image
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setActiveModal("paste")}>
-            <Clipboard className="h-4 w-4 mr-2" />
-            Paste Context (text + files)
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {/* Add Entry Modal */}
-      <AddEntryModal
-        open={activeModal === "entry"}
-        onClose={() => setActiveModal(null)}
-        basketId={basketId}
-        onSuccess={handleSuccess}
-      />
-
-      {/* Upload Document Modal */}
-      <UploadAssetModal
-        open={activeModal === "document"}
-        onClose={() => setActiveModal(null)}
-        basketId={basketId}
-        onUploadSuccess={handleSuccess}
-      />
-
-      {/* Upload Image Modal */}
-      <UploadAssetModal
-        open={activeModal === "image"}
-        onClose={() => setActiveModal(null)}
-        basketId={basketId}
-        onUploadSuccess={handleSuccess}
-      />
-
-      {/* Legacy Paste Context Modal (text + files combined) */}
-      <AddContextModal
-        isOpen={activeModal === "paste"}
-        onClose={() => setActiveModal(null)}
-        projectId={projectId}
-        basketId={basketId}
-        onSuccess={handleSuccess}
-        onStartPolling={() => {
-          // Context blocks client handles its own polling
-        }}
-      />
-    </>
+    <Button variant="outline" disabled title="Use the + Add buttons on each context type below">
+      <Plus className="h-4 w-4 mr-1.5" />
+      Add Context
+    </Button>
   );
 }

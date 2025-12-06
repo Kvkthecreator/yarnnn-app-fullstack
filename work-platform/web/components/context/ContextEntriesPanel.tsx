@@ -1,27 +1,25 @@
 "use client";
 
 /**
- * ContextEntriesPanel - Display context entries with inline content visibility
+ * ContextEntriesPanel - Windows Explorer-style context management
  *
- * Refactored for TP sidebar integration:
- * - Inline content display (not just previews)
- * - Expandable/collapsible cards
- * - "Last updated by" badges (user vs agent)
+ * Architecture (Refactored Dec 2025):
+ * - Two view modes: List (compact) and Grid (detailed preview)
+ * - Click navigates to detail page (bento layout)
+ * - No inline expansion - detail page handles full content
  * - Realtime updates via Supabase
- * - Edit button opens modal (viewing is inline)
  *
  * See: /docs/architecture/ADR_CONTEXT_ITEMS_UNIFIED.md
  */
 
 import { useState, useEffect, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import {
   Plus,
   Pencil,
-  ChevronDown,
-  ChevronRight,
   CheckCircle,
   AlertCircle,
   AlertTriangle,
@@ -36,10 +34,12 @@ import {
   User,
   Bot,
   Sparkles,
-  ExternalLink,
   Lightbulb,
+  List,
+  LayoutGrid,
+  ChevronRight,
 } from 'lucide-react';
-import Link from 'next/link';
+// Link removed - using router.push for navigation
 import {
   useContextSchemas,
   useContextEntries,
@@ -49,7 +49,12 @@ import {
 import { useContextItemsRealtime } from '@/hooks/useTPRealtime';
 import ContextEntryEditor from './ContextEntryEditor';
 
-// Icon mapping for anchor roles
+// =============================================================================
+// CONSTANTS & CONFIG
+// =============================================================================
+
+type ViewMode = 'list' | 'grid';
+
 const ROLE_ICONS: Record<string, React.ElementType> = {
   problem: AlertTriangle,
   customer: Users,
@@ -61,14 +66,12 @@ const ROLE_ICONS: Record<string, React.ElementType> = {
   competitor_snapshot: BarChart3,
 };
 
-// Tier display config
 const TIER_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
   foundation: { label: 'Foundation', color: 'text-blue-700', bgColor: 'bg-blue-500/10 border-blue-500/30' },
   working: { label: 'Working', color: 'text-purple-700', bgColor: 'bg-purple-500/10 border-purple-500/30' },
   ephemeral: { label: 'Ephemeral', color: 'text-gray-600', bgColor: 'bg-gray-500/10 border-gray-500/30' },
 };
 
-// Item type display labels
 const ITEM_TYPE_LABELS: Record<string, string> = {
   trend_digest: 'Trend Digest',
   market_intel: 'Market Intelligence',
@@ -76,11 +79,10 @@ const ITEM_TYPE_LABELS: Record<string, string> = {
   problem: 'Problem',
   customer: 'Customer',
   vision: 'Vision',
-  brand: 'Brand',
+  brand: 'Brand Identity',
   competitor: 'Competitor',
 };
 
-// Category display config
 const CATEGORY_CONFIG = {
   foundation: {
     title: 'Foundation',
@@ -99,6 +101,10 @@ const CATEGORY_CONFIG = {
   },
 };
 
+// =============================================================================
+// MAIN COMPONENT
+// =============================================================================
+
 interface ContextEntriesPanelProps {
   projectId: string;
   basketId: string;
@@ -110,6 +116,21 @@ export default function ContextEntriesPanel({
   basketId,
   initialAnchorRole,
 }: ContextEntriesPanelProps) {
+  const router = useRouter();
+
+  // View mode state - persisted to localStorage
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('context-view-mode') as ViewMode) || 'list';
+    }
+    return 'list';
+  });
+
+  // Persist view mode
+  useEffect(() => {
+    localStorage.setItem('context-view-mode', viewMode);
+  }, [viewMode]);
+
   // Fetch schemas and entries
   const {
     schemas,
@@ -132,28 +153,12 @@ export default function ContextEntriesPanel({
     refetchEntries();
   });
 
-  // Expanded state for cards
-  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-
   // Editor modal state
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingSchema, setEditingSchema] = useState<ContextEntrySchema | null>(null);
   const [editingEntry, setEditingEntry] = useState<ContextEntry | null>(null);
   const [editingEntryKey, setEditingEntryKey] = useState<string | undefined>();
   const [initialRoleHandled, setInitialRoleHandled] = useState(false);
-
-  // Toggle card expansion
-  const toggleExpanded = (roleKey: string) => {
-    setExpandedCards((prev) => {
-      const next = new Set(prev);
-      if (next.has(roleKey)) {
-        next.delete(roleKey);
-      } else {
-        next.add(roleKey);
-      }
-      return next;
-    });
-  };
 
   // Open editor for a schema
   const openEditor = (schema: ContextEntrySchema, entry?: ContextEntry, entryKey?: string) => {
@@ -189,6 +194,11 @@ export default function ContextEntriesPanel({
     closeEditor();
   };
 
+  // Navigate to detail page
+  const navigateToDetail = (entryId: string) => {
+    router.push(`/projects/${projectId}/context/${entryId}`);
+  };
+
   // Calculate overall completeness
   const overallCompleteness = useMemo(() => {
     const foundationSchemas = schemasByCategory.foundation;
@@ -205,7 +215,7 @@ export default function ContextEntriesPanel({
     return filled / foundationSchemas.length;
   }, [schemasByCategory.foundation, getEntryByRole]);
 
-  // Filter agent-generated working-tier insights (trend_digest, market_intel, competitor_snapshot)
+  // Filter agent-generated working-tier insights
   const agentInsights = useMemo(() => {
     return entries.filter(
       (entry) =>
@@ -248,34 +258,59 @@ export default function ContextEntriesPanel({
   }
 
   return (
-    <div className="space-y-8">
-      {/* Overall completeness */}
-      <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
-        <div className="flex-1">
-          <div className="flex items-center justify-between text-sm mb-2">
-            <span className="font-medium">Foundation Completeness</span>
-            <span className="text-muted-foreground">
-              {Math.round(overallCompleteness * 100)}%
-            </span>
+    <div className="space-y-6">
+      {/* Header with completeness + view toggle */}
+      <div className="flex items-center gap-4">
+        {/* Completeness bar */}
+        <div className="flex-1 flex items-center gap-4 p-4 bg-muted/50 rounded-lg">
+          <div className="flex-1">
+            <div className="flex items-center justify-between text-sm mb-2">
+              <span className="font-medium">Foundation Completeness</span>
+              <span className="text-muted-foreground">
+                {Math.round(overallCompleteness * 100)}%
+              </span>
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all ${
+                  overallCompleteness === 1
+                    ? 'bg-green-500'
+                    : overallCompleteness >= 0.5
+                    ? 'bg-yellow-500'
+                    : 'bg-red-500'
+                }`}
+                style={{ width: `${overallCompleteness * 100}%` }}
+              />
+            </div>
           </div>
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all ${
-                overallCompleteness === 1
-                  ? 'bg-green-500'
-                  : overallCompleteness >= 0.5
-                  ? 'bg-yellow-500'
-                  : 'bg-red-500'
-              }`}
-              style={{ width: `${overallCompleteness * 100}%` }}
-            />
-          </div>
+          {overallCompleteness === 1 ? (
+            <CheckCircle className="h-6 w-6 text-green-500" />
+          ) : (
+            <AlertCircle className="h-6 w-6 text-muted-foreground" />
+          )}
         </div>
-        {overallCompleteness === 1 ? (
-          <CheckCircle className="h-6 w-6 text-green-500" />
-        ) : (
-          <AlertCircle className="h-6 w-6 text-muted-foreground" />
-        )}
+
+        {/* View mode toggle */}
+        <div className="flex items-center border rounded-lg p-1 bg-muted/30">
+          <Button
+            variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-8 px-3"
+            onClick={() => setViewMode('list')}
+            title="List view"
+          >
+            <List className="h-4 w-4" />
+          </Button>
+          <Button
+            variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-8 px-3"
+            onClick={() => setViewMode('grid')}
+            title="Grid view"
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Render each category */}
@@ -296,144 +331,61 @@ export default function ContextEntriesPanel({
               </div>
             </div>
 
-            {/* Schema cards */}
-            <div className="grid gap-3">
-              {categorySchemas.map((schema) => {
-                const entry = getEntryByRole(schema.anchor_role);
-                const Icon = ROLE_ICONS[schema.anchor_role] || AlertCircle;
-                const hasContent = entry && Object.keys(entry.data).length > 0;
-                const isAgentProduced = schema.field_schema.agent_produced;
-                const isExpanded = expandedCards.has(schema.anchor_role);
-
-                return (
-                  <Card
+            {/* Items - List or Grid view */}
+            {viewMode === 'list' ? (
+              <div className="space-y-2">
+                {categorySchemas.map((schema) => (
+                  <ContextItemRow
                     key={schema.anchor_role}
-                    className={`overflow-hidden transition-all ${
-                      hasContent ? '' : 'border-dashed'
-                    }`}
-                  >
-                    {/* Card header - always visible */}
-                    <div
-                      className="p-4 cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => hasContent && toggleExpanded(schema.anchor_role)}
-                    >
-                      <div className="flex items-center gap-4">
-                        {/* Icon */}
-                        <div
-                          className={`p-2 rounded-lg ${
-                            hasContent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-                          }`}
-                        >
-                          <Icon className="h-5 w-5" />
-                        </div>
+                    schema={schema}
+                    entry={getEntryByRole(schema.anchor_role) ?? null}
+                    onNavigate={navigateToDetail}
+                    onEdit={(entry) => openEditor(schema, entry)}
+                    onAdd={() => openEditor(schema)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {categorySchemas.map((schema) => (
+                  <ContextItemCard
+                    key={schema.anchor_role}
+                    schema={schema}
+                    entry={getEntryByRole(schema.anchor_role) ?? null}
+                    onNavigate={navigateToDetail}
+                    onEdit={(entry) => openEditor(schema, entry)}
+                    onAdd={() => openEditor(schema)}
+                  />
+                ))}
+              </div>
+            )}
 
-                        {/* Title and meta */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium">{schema.display_name}</span>
-                            {isAgentProduced && (
-                              <Badge variant="secondary" className="text-xs">
-                                Agent
-                              </Badge>
-                            )}
-                            {/* Last updated by badge */}
-                            {entry && (
-                              <LastUpdatedBadge entry={entry} />
-                            )}
-                          </div>
-                          {!hasContent && (
-                            <p className="text-sm text-muted-foreground truncate">
-                              {schema.description}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center gap-2">
-                          {hasContent ? (
-                            <>
-                              {/* View Details Link */}
-                              <Link
-                                href={`/projects/${projectId}/context/${entry.id}`}
-                                className="h-8 w-8 p-0 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                              </Link>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditor(schema, entry);
-                                }}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              {isExpanded ? (
-                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                              )}
-                            </>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditor(schema);
-                              }}
-                            >
-                              <Plus className="h-4 w-4 mr-1" />
-                              Add
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Expanded content */}
-                    {hasContent && isExpanded && (
-                      <div className="px-4 pb-4 border-t border-border pt-4">
-                        <ContextContentDisplay
-                          entry={entry}
-                          schema={schema}
-                        />
-                      </div>
-                    )}
-                  </Card>
-                );
-              })}
-
-              {/* Add competitor button for market category */}
-              {category === 'market' && (
-                <Button
-                  variant="outline"
-                  className="border-dashed justify-start gap-2"
-                  onClick={() => {
-                    const competitorSchema = categorySchemas.find(
-                      (s) => s.anchor_role === 'competitor'
-                    );
-                    if (competitorSchema) {
-                      openEditor(competitorSchema, undefined, `competitor-${Date.now()}`);
-                    }
-                  }}
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Competitor
-                </Button>
-              )}
-            </div>
+            {/* Add competitor button for market category */}
+            {category === 'market' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-dashed"
+                onClick={() => {
+                  const competitorSchema = categorySchemas.find(
+                    (s) => s.anchor_role === 'competitor'
+                  );
+                  if (competitorSchema) {
+                    openEditor(competitorSchema, undefined, `competitor-${Date.now()}`);
+                  }
+                }}
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Add Competitor
+              </Button>
+            )}
           </div>
         );
       })}
 
-      {/* Agent Insights Section - Working tier, agent-generated items */}
+      {/* Agent Insights Section */}
       {agentInsights.length > 0 && (
         <div className="space-y-4">
-          {/* Section header */}
           <div className="flex items-center gap-3">
             <div className="w-1 h-6 rounded-full bg-purple-500" />
             <div className="flex-1">
@@ -449,18 +401,27 @@ export default function ContextEntriesPanel({
             </div>
           </div>
 
-          {/* Agent insight cards */}
-          <div className="grid gap-3">
-            {agentInsights.map((entry) => (
-              <AgentInsightCard
-                key={entry.id}
-                entry={entry}
-                projectId={projectId}
-                isExpanded={expandedCards.has(entry.id)}
-                onToggle={() => toggleExpanded(entry.id)}
-              />
-            ))}
-          </div>
+          {viewMode === 'list' ? (
+            <div className="space-y-2">
+              {agentInsights.map((entry) => (
+                <AgentInsightRow
+                  key={entry.id}
+                  entry={entry}
+                  onNavigate={navigateToDetail}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {agentInsights.map((entry) => (
+                <AgentInsightCard
+                  key={entry.id}
+                  entry={entry}
+                  onNavigate={navigateToDetail}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -482,24 +443,352 @@ export default function ContextEntriesPanel({
   );
 }
 
-/**
- * Badge showing who last updated the entry
- */
-function LastUpdatedBadge({ entry }: { entry: ContextEntry }) {
-  // Parse the updated_by or created_by field
-  // Format: 'user:{id}' or 'agent:{type}'
-  const updatedBy = entry.updated_by || entry.created_by;
+// =============================================================================
+// LIST VIEW COMPONENTS
+// =============================================================================
 
+/**
+ * Compact row for list view
+ */
+function ContextItemRow({
+  schema,
+  entry,
+  onNavigate,
+  onEdit,
+  onAdd,
+}: {
+  schema: ContextEntrySchema;
+  entry: ContextEntry | null;
+  onNavigate: (id: string) => void;
+  onEdit: (entry: ContextEntry) => void;
+  onAdd: () => void;
+}) {
+  const Icon = ROLE_ICONS[schema.anchor_role] || AlertCircle;
+  const hasContent = entry && Object.keys(entry.data).length > 0;
+
+  return (
+    <Card
+      className={`group transition-all ${
+        hasContent
+          ? 'cursor-pointer hover:bg-muted/50'
+          : 'border-dashed'
+      }`}
+      onClick={() => hasContent && entry && onNavigate(entry.id)}
+    >
+      <div className="flex items-center gap-4 p-4">
+        {/* Icon */}
+        <div
+          className={`p-2 rounded-lg shrink-0 ${
+            hasContent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+          }`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+
+        {/* Title and meta */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{schema.display_name}</span>
+            {entry && <SourceBadge entry={entry} />}
+          </div>
+          {!hasContent && (
+            <p className="text-sm text-muted-foreground truncate">
+              {schema.description}
+            </p>
+          )}
+          {hasContent && entry && (
+            <p className="text-sm text-muted-foreground truncate">
+              {getContentPreview(entry.data, 80)}
+            </p>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 shrink-0">
+          {hasContent && entry ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(entry);
+                }}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAdd();
+              }}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Add
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Agent insight row for list view
+ */
+function AgentInsightRow({
+  entry,
+  onNavigate,
+}: {
+  entry: ContextEntry;
+  onNavigate: (id: string) => void;
+}) {
+  const Icon = ROLE_ICONS[entry.anchor_role] || Sparkles;
+  const typeLabel = ITEM_TYPE_LABELS[entry.anchor_role] || entry.anchor_role;
+  const tierConfig = TIER_CONFIG[entry.tier || 'working'];
+
+  const sourceRef = entry.source_ref as { agent_type?: string } | null;
+  const agentType = sourceRef?.agent_type;
+
+  return (
+    <Card
+      className="cursor-pointer hover:bg-purple-500/5 transition-all border-purple-500/20 bg-purple-500/5"
+      onClick={() => onNavigate(entry.id)}
+    >
+      <div className="flex items-center gap-4 p-4">
+        <div className="p-2 rounded-lg bg-purple-500/10 text-purple-600 shrink-0">
+          <Icon className="h-5 w-5" />
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium">{entry.display_name || typeLabel}</span>
+            <Badge variant="outline" className={`text-xs ${tierConfig.bgColor} ${tierConfig.color}`}>
+              {tierConfig.label}
+            </Badge>
+            <Badge variant="secondary" className="text-xs gap-1">
+              <Bot className="h-3 w-3" />
+              {agentType || 'Agent'}
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground truncate mt-0.5">
+            {getContentPreview(entry.data, 100)}
+          </p>
+        </div>
+
+        <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+      </div>
+    </Card>
+  );
+}
+
+// =============================================================================
+// GRID VIEW COMPONENTS
+// =============================================================================
+
+/**
+ * Detailed card for grid view - Windows Explorer "Details" style
+ */
+function ContextItemCard({
+  schema,
+  entry,
+  onNavigate,
+  onEdit,
+  onAdd,
+}: {
+  schema: ContextEntrySchema;
+  entry: ContextEntry | null;
+  onNavigate: (id: string) => void;
+  onEdit: (entry: ContextEntry) => void;
+  onAdd: () => void;
+}) {
+  const Icon = ROLE_ICONS[schema.anchor_role] || AlertCircle;
+  const hasContent = entry && Object.keys(entry.data).length > 0;
+
+  return (
+    <Card
+      className={`group flex flex-col h-full transition-all ${
+        hasContent
+          ? 'cursor-pointer hover:shadow-md hover:border-primary/30'
+          : 'border-dashed'
+      }`}
+      onClick={() => hasContent && entry && onNavigate(entry.id)}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-3 p-4 pb-2">
+        <div
+          className={`p-2.5 rounded-lg shrink-0 ${
+            hasContent ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+          }`}
+        >
+          <Icon className="h-6 w-6" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h4 className="font-medium leading-tight">{schema.display_name}</h4>
+          {entry && (
+            <div className="mt-1">
+              <SourceBadge entry={entry} />
+            </div>
+          )}
+        </div>
+        {hasContent && entry && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(entry);
+            }}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </div>
+
+      {/* Content preview */}
+      <div className="flex-1 px-4 pb-4">
+        {hasContent && entry ? (
+          <div className="space-y-2">
+            {/* Show first few fields */}
+            {getFieldPreviews(entry.data, schema.field_schema.fields).map((preview, idx) => (
+              <div key={idx}>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
+                  {preview.label}
+                </p>
+                {preview.type === 'array' ? (
+                  <div className="flex flex-wrap gap-1">
+                    {(preview.value as string[]).slice(0, 3).map((item, i) => (
+                      <Badge key={i} variant="secondary" className="text-xs">
+                        {item}
+                      </Badge>
+                    ))}
+                    {(preview.value as string[]).length > 3 && (
+                      <Badge variant="outline" className="text-xs">
+                        +{(preview.value as string[]).length - 3}
+                      </Badge>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-foreground line-clamp-2">
+                    {preview.value as string}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="h-full flex flex-col items-center justify-center py-4">
+            <p className="text-sm text-muted-foreground text-center mb-3">
+              {schema.description}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAdd();
+              }}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Add
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Footer with timestamp */}
+      {hasContent && entry && (
+        <div className="px-4 py-2 border-t border-border/50 bg-muted/30">
+          <p className="text-xs text-muted-foreground">
+            Updated {formatRelativeDate(entry.updated_at)}
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Agent insight card for grid view
+ */
+function AgentInsightCard({
+  entry,
+  onNavigate,
+}: {
+  entry: ContextEntry;
+  onNavigate: (id: string) => void;
+}) {
+  const Icon = ROLE_ICONS[entry.anchor_role] || Sparkles;
+  const typeLabel = ITEM_TYPE_LABELS[entry.anchor_role] || entry.anchor_role;
+  const tierConfig = TIER_CONFIG[entry.tier || 'working'];
+
+  const sourceRef = entry.source_ref as { agent_type?: string } | null;
+  const agentType = sourceRef?.agent_type;
+
+  return (
+    <Card
+      className="flex flex-col h-full cursor-pointer hover:shadow-md transition-all border-purple-500/20 bg-purple-500/5 hover:border-purple-500/40"
+      onClick={() => onNavigate(entry.id)}
+    >
+      {/* Header */}
+      <div className="flex items-start gap-3 p-4 pb-2">
+        <div className="p-2.5 rounded-lg bg-purple-500/10 text-purple-600 shrink-0">
+          <Icon className="h-6 w-6" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h4 className="font-medium leading-tight">{entry.display_name || typeLabel}</h4>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            <Badge variant="outline" className={`text-xs ${tierConfig.bgColor} ${tierConfig.color}`}>
+              {tierConfig.label}
+            </Badge>
+            <Badge variant="secondary" className="text-xs gap-1">
+              <Bot className="h-3 w-3" />
+              {agentType || 'Agent'}
+            </Badge>
+          </div>
+        </div>
+      </div>
+
+      {/* Content preview */}
+      <div className="flex-1 px-4 pb-4">
+        <p className="text-sm text-foreground line-clamp-4">
+          {getContentPreview(entry.data, 200)}
+        </p>
+      </div>
+
+      {/* Footer */}
+      <div className="px-4 py-2 border-t border-purple-500/20 bg-purple-500/5">
+        <p className="text-xs text-muted-foreground">
+          Generated {formatRelativeDate(entry.created_at)}
+        </p>
+      </div>
+    </Card>
+  );
+}
+
+// =============================================================================
+// SHARED COMPONENTS
+// =============================================================================
+
+/**
+ * Badge showing source (user or agent)
+ */
+function SourceBadge({ entry }: { entry: ContextEntry }) {
+  const updatedBy = entry.updated_by || entry.created_by;
   if (!updatedBy) return null;
 
   const isAgent = updatedBy.startsWith('agent:');
   const agentType = isAgent ? updatedBy.replace('agent:', '') : null;
 
   return (
-    <Badge
-      variant="outline"
-      className="text-xs gap-1 font-normal"
-    >
+    <Badge variant="outline" className="text-xs gap-1 font-normal">
       {isAgent ? (
         <>
           <Bot className="h-3 w-3" />
@@ -515,228 +804,84 @@ function LastUpdatedBadge({ entry }: { entry: ContextEntry }) {
   );
 }
 
+// =============================================================================
+// UTILITIES
+// =============================================================================
+
 /**
- * Display the actual content of a context entry
+ * Get a text preview from entry data
  */
-function ContextContentDisplay({
-  entry,
-  schema
-}: {
-  entry: ContextEntry;
-  schema: ContextEntrySchema;
-}) {
-  const fields = schema.field_schema.fields;
-  const data = entry.data;
+function getContentPreview(data: Record<string, unknown>, maxLength: number): string {
+  // Try common field names in order of preference
+  const preferredFields = ['summary', 'description', 'statement', 'overview', 'content', 'body'];
 
-  return (
-    <div className="space-y-4">
-      {fields.map((field) => {
-        const value = data[field.key];
+  for (const field of preferredFields) {
+    const value = data[field];
+    if (typeof value === 'string' && value.length > 0) {
+      return value.length > maxLength ? value.slice(0, maxLength) + '...' : value;
+    }
+  }
 
-        // Skip empty fields
-        if (!value || (Array.isArray(value) && value.length === 0)) {
-          return null;
-        }
+  // Fallback to first string field
+  for (const value of Object.values(data)) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value.length > maxLength ? value.slice(0, maxLength) + '...' : value;
+    }
+  }
 
-        return (
-          <div key={field.key} className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              {field.label}
-            </label>
-            <div className="text-sm">
-              {field.type === 'array' && Array.isArray(value) ? (
-                <div className="flex flex-wrap gap-1">
-                  {value.map((item, idx) => (
-                    <Badge key={idx} variant="secondary" className="text-xs">
-                      {String(item)}
-                    </Badge>
-                  ))}
-                </div>
-              ) : field.type === 'longtext' ? (
-                <p className="whitespace-pre-wrap text-foreground leading-relaxed">
-                  {String(value)}
-                </p>
-              ) : field.type === 'asset' && typeof value === 'string' && value.startsWith('asset://') ? (
-                <Badge variant="outline" className="text-xs">
-                  📎 {value.replace('asset://', '').slice(0, 8)}...
-                </Badge>
-              ) : (
-                <p className="text-foreground">{String(value)}</p>
-              )}
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Timestamps */}
-      <div className="pt-2 border-t border-border/50 text-xs text-muted-foreground">
-        Updated {new Date(entry.updated_at).toLocaleDateString()} at{' '}
-        {new Date(entry.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-      </div>
-    </div>
-  );
+  return 'No content';
 }
 
 /**
- * Card for displaying agent-generated insights (working tier)
+ * Get field previews for grid view
  */
-function AgentInsightCard({
-  entry,
-  projectId,
-  isExpanded,
-  onToggle,
-}: {
-  entry: ContextEntry;
-  projectId: string;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  const Icon = ROLE_ICONS[entry.anchor_role] || Sparkles;
-  const tierConfig = TIER_CONFIG[entry.tier || 'working'];
-  const typeLabel = ITEM_TYPE_LABELS[entry.anchor_role] || entry.anchor_role;
+function getFieldPreviews(
+  data: Record<string, unknown>,
+  fields: Array<{ key: string; label: string; type: string }>
+): Array<{ label: string; value: string | string[]; type: string }> {
+  const previews: Array<{ label: string; value: string | string[]; type: string }> = [];
+  const maxFields = 2;
 
-  // Parse source_ref for provenance
-  const sourceRef = entry.source_ref as { work_ticket_id?: string; agent_type?: string } | null;
-  const workTicketId = sourceRef?.work_ticket_id;
-  const agentType = sourceRef?.agent_type;
+  for (const field of fields) {
+    if (previews.length >= maxFields) break;
 
-  const data = (entry.data || {}) as Record<string, string | string[] | Record<string, unknown>>;
-  const hasContent = Object.keys(data).length > 0;
-  const summary = typeof data.summary === 'string' ? data.summary : null;
+    const value = data[field.key];
+    if (!value) continue;
 
-  return (
-    <Card className={`overflow-hidden border-purple-500/20 bg-purple-500/5`}>
-      {/* Card header */}
-      <div
-        className="p-4 cursor-pointer hover:bg-purple-500/10 transition-colors"
-        onClick={onToggle}
-      >
-        <div className="flex items-center gap-4">
-          {/* Icon */}
-          <div className="p-2 rounded-lg bg-purple-500/10 text-purple-600">
-            <Icon className="h-5 w-5" />
-          </div>
+    if (Array.isArray(value) && value.length > 0) {
+      previews.push({
+        label: field.label,
+        value: value.map(String),
+        type: 'array',
+      });
+    } else if (typeof value === 'string' && value.length > 0) {
+      previews.push({
+        label: field.label,
+        value: value.length > 100 ? value.slice(0, 100) + '...' : value,
+        type: 'text',
+      });
+    }
+  }
 
-          {/* Title and meta */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-medium">
-                {entry.display_name || typeLabel}
-              </span>
-              {/* Tier badge */}
-              <Badge
-                variant="outline"
-                className={`text-xs ${tierConfig.bgColor} ${tierConfig.color}`}
-              >
-                {tierConfig.label}
-              </Badge>
-              {/* Agent badge */}
-              <Badge variant="secondary" className="text-xs gap-1">
-                <Bot className="h-3 w-3" />
-                {agentType || 'Agent'}
-              </Badge>
-            </div>
-            {/* Summary preview when collapsed */}
-            {!isExpanded && summary && (
-              <p className="text-sm text-muted-foreground truncate mt-1">
-                {summary}
-              </p>
-            )}
-          </div>
-
-          {/* Actions */}
-          <div className="flex items-center gap-2">
-            {/* View Details Link */}
-            <Link
-              href={`/projects/${projectId}/context/${entry.id}`}
-              className="h-8 w-8 p-0 inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-purple-500/10"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <ExternalLink className="h-4 w-4 text-purple-600" />
-            </Link>
-            {isExpanded ? (
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Expanded content */}
-      {isExpanded && hasContent && (
-        <div className="px-4 pb-4 border-t border-purple-500/20 pt-4 space-y-4">
-          {/* Render all content fields */}
-          <AgentInsightContent data={data} />
-
-          {/* Provenance footer */}
-          <div className="pt-3 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              Generated {new Date(entry.created_at).toLocaleDateString()} at{' '}
-              {new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-            {workTicketId && (
-              <Link
-                href={`/projects/${projectId}/work-tickets/${workTicketId}/track`}
-                className="text-primary hover:underline flex items-center gap-1"
-              >
-                View Work Ticket
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-            )}
-          </div>
-        </div>
-      )}
-    </Card>
-  );
+  return previews;
 }
 
 /**
- * Display structured content from an agent insight
+ * Format relative date
  */
-function AgentInsightContent({ data }: { data: Record<string, unknown> }) {
-  const contentKeys = Object.keys(data);
+function formatRelativeDate(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-  return (
-    <div className="space-y-4">
-      {contentKeys.map((key) => {
-        const value = data[key];
-        if (!value) return null;
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
 
-        // Format the key as a label
-        const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-
-        return (
-          <div key={key} className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              {label}
-            </label>
-            <div className="text-sm">
-              {Array.isArray(value) ? (
-                <ul className="list-disc list-inside space-y-1 text-foreground">
-                  {value.slice(0, 10).map((item, idx) => (
-                    <li key={idx} className="text-sm">
-                      {typeof item === 'object' ? JSON.stringify(item) : String(item)}
-                    </li>
-                  ))}
-                  {value.length > 10 && (
-                    <li className="text-muted-foreground text-xs">+{value.length - 10} more</li>
-                  )}
-                </ul>
-              ) : typeof value === 'object' ? (
-                <pre className="text-xs bg-muted p-2 rounded overflow-auto max-h-32">
-                  {JSON.stringify(value, null, 2)}
-                </pre>
-              ) : (
-                <p className="text-foreground whitespace-pre-wrap leading-relaxed">
-                  {String(value).slice(0, 2000)}
-                  {String(value).length > 2000 ? '...' : ''}
-                </p>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+  return date.toLocaleDateString();
 }
