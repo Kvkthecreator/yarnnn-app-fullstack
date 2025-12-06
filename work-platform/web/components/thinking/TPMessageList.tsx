@@ -1,24 +1,47 @@
 'use client';
 
 /**
- * TPMessageList (v2.0)
+ * TPMessageList (v3.0 - Chat-First Architecture)
  *
  * Displays list of chat messages with TP.
- * Supports tool calls, context changes, and work outputs.
+ * Supports rich in-chat displays: context cards, work outputs, recipe progress.
  *
- * See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
+ * See:
+ * - /docs/architecture/CHAT_FIRST_ARCHITECTURE_V1.md
+ * - /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
  */
 
-import type { TPMessage, TPToolCall } from '@/lib/types/thinking-partner';
+import type {
+  TPMessage,
+  TPToolCall,
+  TPContextChangeRich,
+  TPWorkOutputPreview,
+} from '@/lib/types/thinking-partner';
 import { cn } from '@/lib/utils';
 import { CheckCircle2, User, Bot, Wrench, FileEdit, ListChecks } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import {
+  ContextChangesGroup,
+  WorkOutputCarousel,
+  RecipeProgressCard,
+  ExecutionStepsTimeline,
+} from './chat-cards';
 
 interface TPMessageListProps {
   messages: TPMessage[];
+  onNavigateToContext?: (itemId: string) => void;
+  onNavigateToOutput?: (outputId: string) => void;
+  onNavigateToTicket?: (ticketId: string) => void;
+  onViewAllContext?: () => void;
 }
 
-export function TPMessageList({ messages }: TPMessageListProps) {
+export function TPMessageList({
+  messages,
+  onNavigateToContext,
+  onNavigateToOutput,
+  onNavigateToTicket,
+  onViewAllContext,
+}: TPMessageListProps) {
   if (messages.length === 0) {
     return null;
   }
@@ -26,7 +49,14 @@ export function TPMessageList({ messages }: TPMessageListProps) {
   return (
     <div className="space-y-4">
       {messages.map((message) => (
-        <TPMessageCard key={message.id} message={message} />
+        <TPMessageCard
+          key={message.id}
+          message={message}
+          onNavigateToContext={onNavigateToContext}
+          onNavigateToOutput={onNavigateToOutput}
+          onNavigateToTicket={onNavigateToTicket}
+          onViewAllContext={onViewAllContext}
+        />
       ))}
     </div>
   );
@@ -34,13 +64,33 @@ export function TPMessageList({ messages }: TPMessageListProps) {
 
 interface TPMessageCardProps {
   message: TPMessage;
+  onNavigateToContext?: (itemId: string) => void;
+  onNavigateToOutput?: (outputId: string) => void;
+  onNavigateToTicket?: (ticketId: string) => void;
+  onViewAllContext?: () => void;
 }
 
-function TPMessageCard({ message }: TPMessageCardProps) {
+function TPMessageCard({
+  message,
+  onNavigateToContext,
+  onNavigateToOutput,
+  onNavigateToTicket,
+  onViewAllContext,
+}: TPMessageCardProps) {
   const isUser = message.role === 'user';
 
   // Get timestamp from created_at (v2.0) or timestamp (legacy)
   const timestamp = message.created_at || (message as { timestamp?: string }).timestamp;
+
+  // Check for rich display data (v3.0)
+  const hasContextChanges = message.context_changes && message.context_changes.length > 0;
+  const hasWorkOutputs = message.work_outputs && message.work_outputs.length > 0;
+  const hasRecipeExecution = !!message.recipe_execution;
+  const hasExecutionSteps = message.execution_steps && message.execution_steps.length > 0;
+
+  // Fallback to work_output_ids if no rich work_outputs
+  const hasLegacyOutputs = !hasWorkOutputs &&
+    message.work_output_ids && message.work_output_ids.length > 0;
 
   return (
     <div
@@ -68,8 +118,9 @@ function TPMessageCard({ message }: TPMessageCardProps) {
         {/* Message text */}
         <div className="whitespace-pre-wrap text-sm">{message.content}</div>
 
-        {/* Tool calls (v2.0) */}
-        {message.tool_calls && message.tool_calls.length > 0 && (
+        {/* Tool calls (v2.0) - shown if no rich displays */}
+        {message.tool_calls && message.tool_calls.length > 0 &&
+         !hasContextChanges && !hasWorkOutputs && !hasRecipeExecution && (
           <div className="mt-3 space-y-1 border-t border-border/50 pt-3">
             <div className="text-xs font-medium text-muted-foreground">
               Tools Used:
@@ -82,12 +133,46 @@ function TPMessageCard({ message }: TPMessageCardProps) {
           </div>
         )}
 
-        {/* Work output IDs (v2.0) */}
-        {message.work_output_ids && message.work_output_ids.length > 0 && (
+        {/* v3.0: Rich context changes display */}
+        {hasContextChanges && (
+          <ContextChangesGroup
+            changes={message.context_changes as TPContextChangeRich[]}
+            onNavigate={onNavigateToContext}
+            onViewAll={onViewAllContext}
+          />
+        )}
+
+        {/* v3.0: Rich work outputs display */}
+        {hasWorkOutputs && (
+          <WorkOutputCarousel
+            outputs={message.work_outputs as TPWorkOutputPreview[]}
+            onViewFull={onNavigateToOutput}
+          />
+        )}
+
+        {/* v3.0: Recipe execution progress */}
+        {hasRecipeExecution && (
+          <RecipeProgressCard
+            execution={message.recipe_execution!}
+            steps={message.execution_steps}
+            onTrack={onNavigateToTicket}
+          />
+        )}
+
+        {/* v3.0: Execution steps timeline (standalone, without recipe) */}
+        {hasExecutionSteps && !hasRecipeExecution && (
+          <ExecutionStepsTimeline
+            steps={message.execution_steps!}
+            collapsible
+          />
+        )}
+
+        {/* Legacy: Work output IDs only (fallback) */}
+        {hasLegacyOutputs && (
           <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
             <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <FileEdit className="h-3 w-3" />
-              {message.work_output_ids.length} output{message.work_output_ids.length > 1 ? 's' : ''} created
+              {message.work_output_ids!.length} output{message.work_output_ids!.length > 1 ? 's' : ''} created
             </div>
           </div>
         )}
