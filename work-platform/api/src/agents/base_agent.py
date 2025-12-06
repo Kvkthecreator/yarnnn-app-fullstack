@@ -39,6 +39,9 @@ class AgentContext:
     Work-oriented context for agent execution.
 
     First-principled: No conversation history, just work context.
+
+    Note: As of Dec 2025, `knowledge_context` replaces the legacy `substrate_blocks`
+    terminology to align with the unified context_items architecture.
     """
     basket_id: str
     workspace_id: str
@@ -56,8 +59,9 @@ class AgentContext:
     # Prior work outputs (for context, not duplication)
     prior_outputs: List[Dict[str, Any]] = field(default_factory=list)
 
-    # Substrate context (blocks queried on-demand)
-    substrate_blocks: List[Dict[str, Any]] = field(default_factory=list)
+    # Knowledge context (queried on-demand from substrate/context_items)
+    # Replaces legacy "substrate_blocks" - now supports multi-modal context items
+    knowledge_context: List[Dict[str, Any]] = field(default_factory=list)
 
     # Agent config (from agent_sessions or defaults)
     agent_config: Dict[str, Any] = field(default_factory=dict)
@@ -169,32 +173,32 @@ class BaseAgent(ABC):
             logger.warning(f"Failed to load reference assets: {e}")
             return []
 
-    async def _query_substrate(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def _query_knowledge_context(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Query substrate for relevant context.
+        Query substrate/context_items for relevant knowledge context.
 
         Args:
             query: Semantic query string
             limit: Maximum results
 
         Returns:
-            List of substrate blocks as dicts
+            List of knowledge context items as dicts
         """
         try:
             contexts = await self.substrate.query(query, limit=limit)
-            blocks = []
+            items = []
             for ctx in contexts:
                 if ctx.content and ctx.content != "[AGENT EXECUTION CONTEXT]":
-                    blocks.append({
+                    items.append({
                         "id": ctx.metadata.get("id"),
                         "content": ctx.content,
-                        "semantic_type": ctx.metadata.get("semantic_type"),
+                        "item_type": ctx.metadata.get("semantic_type"),  # Renamed for clarity
                         "confidence": ctx.metadata.get("confidence"),
                     })
-            logger.info(f"Queried substrate: {len(blocks)} relevant blocks")
-            return blocks
+            logger.info(f"Queried knowledge context: {len(items)} relevant items")
+            return items
         except Exception as e:
-            logger.warning(f"Substrate query failed: {e}")
+            logger.warning(f"Knowledge context query failed: {e}")
             return []
 
     async def _build_context(
@@ -202,7 +206,7 @@ class BaseAgent(ABC):
         task: str,
         include_prior_outputs: bool = True,
         include_assets: bool = True,
-        substrate_query: Optional[str] = None,
+        knowledge_query: Optional[str] = None,
     ) -> AgentContext:
         """
         Build work-oriented context for agent execution.
@@ -211,7 +215,7 @@ class BaseAgent(ABC):
             task: Task description
             include_prior_outputs: Whether to load prior outputs
             include_assets: Whether to load reference assets
-            substrate_query: Optional query for substrate context
+            knowledge_query: Optional query for knowledge context (substrate/context_items)
 
         Returns:
             AgentContext with all loaded context
@@ -226,10 +230,10 @@ class BaseAgent(ABC):
         if include_assets:
             reference_assets = await self._load_reference_assets()
 
-        # Query substrate for task-relevant context
-        substrate_blocks = []
-        if substrate_query:
-            substrate_blocks = await self._query_substrate(substrate_query)
+        # Query knowledge context for task-relevant items
+        knowledge_context = []
+        if knowledge_query:
+            knowledge_context = await self._query_knowledge_context(knowledge_query)
 
         return AgentContext(
             basket_id=self.basket_id,
@@ -240,7 +244,7 @@ class BaseAgent(ABC):
             agent_type=self.AGENT_TYPE,
             reference_assets=reference_assets,
             prior_outputs=prior_outputs,
-            substrate_blocks=substrate_blocks,
+            knowledge_context=knowledge_context,
             user_jwt=self.user_jwt,
         )
 
@@ -282,16 +286,16 @@ Previous research/outputs for this basket (avoid duplication):
 {outputs_text}
 """)
 
-        # Add substrate context
-        if context.substrate_blocks:
-            blocks_text = "\n".join([
-                f"- [{b.get('id', 'unknown')[:8]}] {b.get('content', '')[:200]}..."
-                for b in context.substrate_blocks[:5]
+        # Add knowledge context
+        if context.knowledge_context:
+            context_text = "\n".join([
+                f"- [{item.get('id', 'unknown')[:8]}] {item.get('content', '')[:200]}..."
+                for item in context.knowledge_context[:5]
             ])
             prompt_parts.append(f"""
-## Substrate Context
-Relevant knowledge from substrate:
-{blocks_text}
+## Knowledge Context
+Relevant context from project knowledge base:
+{context_text}
 """)
 
         return "\n\n".join(prompt_parts)

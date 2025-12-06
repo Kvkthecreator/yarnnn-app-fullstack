@@ -157,12 +157,12 @@ class ResearchAgent(BaseAgent):
             f"recipe={recipe_slug}, context_item={is_context_item_recipe}"
         )
 
-        # Build context with substrate query for relevant prior knowledge
+        # Build context with knowledge query for relevant prior knowledge
         context = await self._build_context(
             task=task,
             include_prior_outputs=True,
             include_assets=True,
-            substrate_query=task,  # Query substrate with the task itself
+            knowledge_query=task,  # Query knowledge base with the task itself
         )
 
         # Build research prompt (with recipe-specific instructions)
@@ -226,17 +226,17 @@ class ResearchAgent(BaseAgent):
         Returns:
             Research prompt string
         """
-        # Format substrate context
-        substrate_context = "No prior context available"
-        source_block_ids = []
-        if context.substrate_blocks:
-            substrate_context = "\n".join([
-                f"- [{b.get('id', 'unknown')[:8]}] {b.get('content', '')[:300]}..."
-                for b in context.substrate_blocks[:5]
+        # Format knowledge context
+        knowledge_context_text = "No prior context available"
+        source_context_ids = []
+        if context.knowledge_context:
+            knowledge_context_text = "\n".join([
+                f"- [{item.get('id', 'unknown')[:8]}] {item.get('content', '')[:300]}..."
+                for item in context.knowledge_context[:5]
             ])
-            source_block_ids = [
-                b.get('id') for b in context.substrate_blocks
-                if b.get('id')
+            source_context_ids = [
+                item.get('id') for item in context.knowledge_context
+                if item.get('id')
             ]
 
         # Determine depth instructions
@@ -269,11 +269,11 @@ class ResearchAgent(BaseAgent):
 - Maximum web searches: {max_searches}
 {f"- Recipe: {recipe_slug}" if recipe_slug else ""}
 
-**Pre-loaded Context:**
-{substrate_context}
+**Pre-loaded Knowledge Context:**
+{knowledge_context_text}
 
-**Source Block IDs (for provenance):**
-{source_block_ids if source_block_ids else 'None available'}
+**Source Context IDs (for provenance):**
+{source_context_ids if source_context_ids else 'None available'}
 
 **Research Objectives:**
 1. Provide comprehensive overview of the topic
@@ -293,7 +293,7 @@ You MUST use the emit_work_output tool to record your findings. Do NOT just desc
 For each significant finding, insight, or recommendation you discover:
 1. Call emit_work_output with structured data
 2. Use appropriate output_type (finding, recommendation, insight)
-3. Include source_block_ids from context if relevant
+3. Include source_context_ids from knowledge context if relevant
 4. Assign confidence scores based on evidence quality
 
 Example workflow:

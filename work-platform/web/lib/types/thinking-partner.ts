@@ -1,10 +1,12 @@
 /**
- * Thinking Partner Types (v2.0)
+ * Thinking Partner Types (v3.0 - Chat-First Architecture)
  *
  * Types for TP chat interface, session management, and work lifecycle.
- * Updated for new session persistence and context management.
+ * Updated Dec 2025 for chat-first architecture with rich in-chat displays.
  *
- * See: /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
+ * See:
+ * - /docs/architecture/CHAT_FIRST_ARCHITECTURE_V1.md
+ * - /docs/implementation/THINKING_PARTNER_IMPLEMENTATION_PLAN.md
  */
 
 // ============================================================================
@@ -110,6 +112,7 @@ export type MessageRole = 'user' | 'assistant' | 'system';
 
 /**
  * TP message as stored in tp_messages table
+ * Extended in v3.0 for rich in-chat displays
  */
 export interface TPMessage {
   id: string;
@@ -119,6 +122,15 @@ export interface TPMessage {
   tool_calls?: TPToolCall[];
   work_output_ids?: string[];
   created_at: string;
+
+  // v3.0 Chat-First: Rich display data (optional, populated for rendering)
+  context_changes?: TPContextChangeRich[];      // Context items created/updated
+  work_outputs?: TPWorkOutputPreview[];         // Work output previews
+  recipe_execution?: TPRecipeExecution;         // Active recipe progress
+  execution_steps?: TPExecutionStep[];          // Workflow step timeline
+
+  // Phase indicator for ambient visualization
+  tp_phase?: TPPhase;
 }
 
 /**
@@ -131,11 +143,67 @@ export interface TPToolCall {
 }
 
 /**
- * Context change record for display
+ * Context change record for display (basic)
  */
 export interface TPContextChange {
   item_type: string;
   action: 'written' | 'proposed' | 'unknown';
+}
+
+/**
+ * Rich context change with full metadata for in-chat display cards
+ * Used when we want to show preview cards in chat messages
+ */
+export interface TPContextChangeRich extends TPContextChange {
+  item_id?: string;
+  title?: string;
+  tier?: 'foundation' | 'working' | 'ephemeral';
+  preview?: string;  // First 100 chars of content
+  schema_id?: string;
+  completeness_score?: number;
+  created_by?: string;  // "user:{id}" or "agent:{type}"
+}
+
+/**
+ * Work output preview for in-chat display cards
+ * Lighter than full WorkOutput, optimized for chat rendering
+ */
+export interface TPWorkOutputPreview {
+  id: string;
+  output_type: string;
+  title?: string;
+  body_preview?: string;  // First 200 chars
+  supervision_status: 'pending_review' | 'approved' | 'rejected' | 'revision_requested';
+  confidence?: number;
+  agent_type?: string;
+  created_at: string;
+}
+
+/**
+ * Recipe execution status for in-chat progress cards
+ */
+export interface TPRecipeExecution {
+  recipe_slug: string;
+  recipe_name?: string;
+  ticket_id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress_pct?: number;
+  current_step?: string;
+  started_at?: string;
+  completed_at?: string;
+  estimated_duration?: string;
+}
+
+/**
+ * Execution step for timeline visualization
+ */
+export interface TPExecutionStep {
+  step_number: number;
+  description: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  duration_ms?: number;
+  started_at?: string;
+  completed_at?: string;
 }
 
 // ============================================================================
@@ -153,6 +221,7 @@ export interface TPChatRequest {
 
 /**
  * Response from TP chat
+ * Extended in v3.0 for rich in-chat displays
  */
 export interface TPChatResponse {
   message: string;
@@ -161,6 +230,13 @@ export interface TPChatResponse {
   tool_calls: TPToolCall[];
   work_outputs: WorkOutput[];
   context_changes: TPContextChange[];
+
+  // v3.0 Chat-First: Rich display data
+  context_changes_rich?: TPContextChangeRich[];  // Full metadata for cards
+  work_output_previews?: TPWorkOutputPreview[];  // Preview data for cards
+  recipe_execution?: TPRecipeExecution;          // If recipe was triggered
+  execution_steps?: TPExecutionStep[];           // If workflow was planned
+  tp_phase?: TPPhase;                            // Current TP phase
 }
 
 /**

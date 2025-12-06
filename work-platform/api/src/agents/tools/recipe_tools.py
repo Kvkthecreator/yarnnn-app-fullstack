@@ -155,11 +155,16 @@ async def list_recipes(
         for recipe in result.data:
             categories_seen.add(recipe.get("category", ""))
 
-            # Extract context requirements
+            # Extract context requirements (supports both new and legacy formats)
             ctx_req = recipe.get("context_requirements", {}) or {}
-            required_context = ctx_req.get("required", [])
-            if isinstance(ctx_req.get("substrate_blocks"), dict):
-                # Some recipes use substrate_blocks format
+
+            # New format: context_items.required_types
+            required_context = ctx_req.get("context_items", {}).get("required_types", [])
+
+            # Legacy fallback: substrate_blocks.semantic_types (deprecated Dec 2025)
+            if not required_context:
+                required_context = ctx_req.get("required", [])
+            if not required_context and isinstance(ctx_req.get("substrate_blocks"), dict):
                 required_context = ctx_req.get("substrate_blocks", {}).get("semantic_types", [])
 
             # Extract parameter names

@@ -5,15 +5,15 @@
  *
  * Architecture (Phase 2 Refactor):
  * - NO modals - all editing happens inline on this page
- * - Bento-box layout for viewing
- * - Inline form fields for editing
- * - Auto-save or explicit save button
+ * - Simple form layout following schema field order
+ * - Edit mode: form fields for input
+ * - View mode: clean display of values
  * - Delete functionality here
  *
  * Design Philosophy:
  * - Page IS the editor (no modal layer)
- * - Visual hierarchy through tile sizing
- * - Responsive grid layout
+ * - Schema-driven field order (not content-based sizing)
+ * - Always show all fields so user knows what's available
  * - Clear provenance tracking
  */
 
@@ -220,26 +220,23 @@ export default function ContextItemDetailClient({
     return [];
   }, [schema, item?.content]);
 
-  // Categorize fields by size for bento layout
-  const { largeFields, mediumFields, smallFields } = useMemo(() => {
-    const large: FieldDefinition[] = [];
-    const medium: FieldDefinition[] = [];
-    const small: FieldDefinition[] = [];
+  // Categorize fields for layout - group short fields together
+  const { primaryFields, secondaryFields } = useMemo(() => {
+    const primary: FieldDefinition[] = [];
+    const secondary: FieldDefinition[] = [];
 
     fields.forEach((field) => {
-      const value = isEditing ? formData[field.key] : item?.content[field.key];
-
-      if (field.type === 'longtext' || (typeof value === 'string' && value.length > 200)) {
-        large.push(field);
-      } else if (field.type === 'array' || field.type === 'asset') {
-        medium.push(field);
+      // Primary: longtext, array, asset fields get full width
+      if (field.type === 'longtext' || field.type === 'array' || field.type === 'asset') {
+        primary.push(field);
       } else {
-        small.push(field);
+        // Secondary: short text fields can be grouped
+        secondary.push(field);
       }
     });
 
-    return { largeFields: large, mediumFields: medium, smallFields: small };
-  }, [fields, item?.content, formData, isEditing]);
+    return { primaryFields: primary, secondaryFields: secondary };
+  }, [fields]);
 
   // Track changes
   const updateField = useCallback((key: string, value: unknown) => {
@@ -478,48 +475,34 @@ export default function ContextItemDetailClient({
         </div>
       </div>
 
-      {/* Bento Grid */}
-      <div className="grid grid-cols-12 gap-4 auto-rows-min">
-        {/* Large fields */}
-        {largeFields.map((field) => (
-          <div key={field.key} className="col-span-12 lg:col-span-8">
-            <FieldTile
-              field={field}
-              value={isEditing ? formData[field.key] : item?.content[field.key]}
-              isEditing={isEditing}
-              onChange={(value) => updateField(field.key, value)}
-              basketId={basketId}
-              size="large"
-            />
+      {/* Fields Layout - Schema order, not content-based sizing */}
+      <div className="space-y-6">
+        {/* Short text fields - grouped in a row when there are multiple */}
+        {secondaryFields.length > 0 && (
+          <div className={`grid gap-4 ${secondaryFields.length > 1 ? 'sm:grid-cols-2 lg:grid-cols-3' : ''}`}>
+            {secondaryFields.map((field) => (
+              <FieldSection
+                key={field.key}
+                field={field}
+                value={isEditing ? formData[field.key] : item?.content[field.key]}
+                isEditing={isEditing}
+                onChange={(value) => updateField(field.key, value)}
+                basketId={basketId}
+              />
+            ))}
           </div>
-        ))}
+        )}
 
-        {/* Medium fields */}
-        {mediumFields.map((field) => (
-          <div key={field.key} className="col-span-12 sm:col-span-6 lg:col-span-4">
-            <FieldTile
-              field={field}
-              value={isEditing ? formData[field.key] : item?.content[field.key]}
-              isEditing={isEditing}
-              onChange={(value) => updateField(field.key, value)}
-              basketId={basketId}
-              size="medium"
-            />
-          </div>
-        ))}
-
-        {/* Small fields */}
-        {smallFields.map((field) => (
-          <div key={field.key} className="col-span-12 sm:col-span-6 lg:col-span-3">
-            <FieldTile
-              field={field}
-              value={isEditing ? formData[field.key] : item?.content[field.key]}
-              isEditing={isEditing}
-              onChange={(value) => updateField(field.key, value)}
-              basketId={basketId}
-              size="small"
-            />
-          </div>
+        {/* Primary fields - full width, in schema order */}
+        {primaryFields.map((field) => (
+          <FieldSection
+            key={field.key}
+            field={field}
+            value={isEditing ? formData[field.key] : item?.content[field.key]}
+            isEditing={isEditing}
+            onChange={(value) => updateField(field.key, value)}
+            basketId={basketId}
+          />
         ))}
       </div>
 
@@ -562,60 +545,53 @@ export default function ContextItemDetailClient({
 }
 
 // =============================================================================
-// FIELD TILE COMPONENT
+// FIELD SECTION COMPONENT
 // =============================================================================
 
-function FieldTile({
+function FieldSection({
   field,
   value,
   isEditing,
   onChange,
   basketId,
-  size,
 }: {
   field: FieldDefinition;
   value: unknown;
   isEditing: boolean;
   onChange: (value: unknown) => void;
   basketId: string;
-  size: 'small' | 'medium' | 'large';
 }) {
   const FieldIcon = FIELD_TYPE_ICONS[field.type] || Type;
-
-  // In view mode, hide empty fields
-  if (!isEditing && !value && value !== 0) {
-    return null;
-  }
+  const hasValue = value !== undefined && value !== null && value !== '' &&
+    !(Array.isArray(value) && value.length === 0);
 
   return (
-    <Card className="h-full overflow-hidden hover:shadow-md transition-shadow">
-      {/* Field Header */}
-      <div className="px-4 py-3 border-b border-border bg-muted/30">
-        <div className="flex items-center gap-2">
-          <FieldIcon className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">
-            {field.label}
-            {field.required && <span className="text-destructive ml-1">*</span>}
-          </span>
-        </div>
+    <div className="space-y-2">
+      {/* Field Label */}
+      <div className="flex items-center gap-2">
+        <FieldIcon className="h-4 w-4 text-muted-foreground" />
+        <Label className="text-sm font-medium">
+          {field.label}
+          {field.required && <span className="text-destructive ml-1">*</span>}
+        </Label>
       </div>
 
       {/* Field Content */}
-      <div className={`p-4 ${size === 'large' ? 'min-h-[200px]' : size === 'medium' ? 'min-h-[120px]' : ''}`}>
+      <div className={`${!isEditing && !hasValue ? 'text-muted-foreground italic text-sm' : ''}`}>
         {isEditing ? (
           <FieldEditor field={field} value={value} onChange={onChange} basketId={basketId} />
-        ) : (
+        ) : hasValue ? (
           <FieldRenderer field={field} value={value} />
+        ) : (
+          <span>Not set</span>
         )}
       </div>
 
       {/* Help text */}
       {isEditing && field.help && (
-        <div className="px-4 pb-3">
-          <p className="text-xs text-muted-foreground">{field.help}</p>
-        </div>
+        <p className="text-xs text-muted-foreground">{field.help}</p>
       )}
-    </Card>
+    </div>
   );
 }
 

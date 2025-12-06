@@ -167,12 +167,12 @@ class ReportingAgent(BaseAgent):
             f"format={output_format}, style={template_style}"
         )
 
-        # Build context with substrate query for relevant research/data
+        # Build context with knowledge query for relevant research/data
         context = await self._build_context(
             task=task,
             include_prior_outputs=True,
             include_assets=True,
-            substrate_query=task,
+            knowledge_query=task,
         )
 
         # Build document generation prompt
@@ -379,12 +379,12 @@ class ReportingAgent(BaseAgent):
         Returns:
             Document prompt string
         """
-        # Format research context
+        # Format research context from knowledge base
         research_context = "No research context available"
-        if context.substrate_blocks:
+        if context.knowledge_context:
             research_context = "\n".join([
-                f"- {b.get('content', '')[:400]}..."
-                for b in context.substrate_blocks[:5]
+                f"- {item.get('content', '')[:400]}..."
+                for item in context.knowledge_context[:5]
             ])
 
         # Format prior outputs (research findings to include)
@@ -415,7 +415,7 @@ class ReportingAgent(BaseAgent):
 - Title: {document_title or "Use task description as title"}
 - Style: {template_style}
 
-**Research Context:**
+**Knowledge Context:**
 {research_context}
 
 **Prior Research Findings:**

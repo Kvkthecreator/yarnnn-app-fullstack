@@ -165,12 +165,12 @@ class ContentAgent(BaseAgent):
             f"type={content_type}, tone={tone}"
         )
 
-        # Build context with substrate query for brand/prior content
+        # Build context with knowledge query for brand/prior content
         context = await self._build_context(
             task=task,
             include_prior_outputs=True,
             include_assets=True,
-            substrate_query=f"brand voice {content_type}",
+            knowledge_query=f"brand voice {content_type}",
         )
 
         # Build content prompt
@@ -232,12 +232,12 @@ class ContentAgent(BaseAgent):
         Returns:
             Content prompt string
         """
-        # Format substrate context (brand info, prior content)
+        # Format knowledge context (brand info, prior content)
         brand_context = "No brand context available"
-        if context.substrate_blocks:
+        if context.knowledge_context:
             brand_context = "\n".join([
-                f"- {b.get('content', '')[:300]}..."
-                for b in context.substrate_blocks[:3]
+                f"- {item.get('content', '')[:300]}..."
+                for item in context.knowledge_context[:3]
             ])
 
         # Format prior content examples
@@ -273,7 +273,7 @@ Create {variant_count} distinct variants of the main content:
 **Brand Voice:**
 {brand_voice or "Professional, knowledgeable, approachable"}
 
-**Brand Context from Substrate:**
+**Brand Context from Knowledge Base:**
 {brand_context}
 
 **Prior Content Examples:**
