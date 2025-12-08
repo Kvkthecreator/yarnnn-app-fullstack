@@ -5,12 +5,13 @@
  *
  * Content for the Context floating window.
  * Displays context items by tier with search, filtering, and highlighting.
+ * Features realtime updates via Supabase subscriptions.
  *
- * Part of Desktop UI Architecture v1.0
+ * Part of Desktop UI Architecture v2.0 (Live Workspace)
  * See: /docs/implementation/DESKTOP_UI_IMPLEMENTATION_PLAN.md
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import {
   Search,
@@ -24,10 +25,13 @@ import {
   TrendingUp,
   CheckCircle2,
   Loader2,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useBasketId, useDesktop } from '../DesktopProvider';
+import { useContextItemsRealtime, type RealtimeEvent, type RealtimeContextItem } from '@/hooks/useTPRealtime';
 
 // ============================================================================
 // Types
@@ -84,6 +88,76 @@ export function ContextWindowContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterTier, setFilterTier] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<ContextItem | null>(null);
+
+  // Track recently changed items for highlight animation
+  const [recentlyChanged, setRecentlyChanged] = useState<Set<string>>(new Set());
+  const recentlyChangedTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  // Realtime subscription handler
+  const handleRealtimeUpdate = useCallback((event: RealtimeEvent<RealtimeContextItem>) => {
+    const { type, data } = event;
+
+    if (type === 'INSERT') {
+      // Fetch full item data since realtime only gives partial
+      fetch(`/api/baskets/${basketId}/context/${data.id}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(fullItem => {
+          if (fullItem) {
+            setItems(prev => [fullItem, ...prev]);
+            // Mark as recently changed for animation
+            setRecentlyChanged(prev => new Set([...prev, data.id]));
+            // Clear highlight after 3 seconds
+            const timeout = setTimeout(() => {
+              setRecentlyChanged(prev => {
+                const next = new Set(prev);
+                next.delete(data.id);
+                return next;
+              });
+            }, 3000);
+            recentlyChangedTimeoutRef.current.set(data.id, timeout);
+          }
+        })
+        .catch(console.error);
+    } else if (type === 'UPDATE') {
+      // Fetch updated item data
+      fetch(`/api/baskets/${basketId}/context/${data.id}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(fullItem => {
+          if (fullItem) {
+            setItems(prev => prev.map(item => item.id === data.id ? fullItem : item));
+            // Mark as recently changed for animation
+            setRecentlyChanged(prev => new Set([...prev, data.id]));
+            // Clear highlight after 3 seconds
+            const timeout = setTimeout(() => {
+              setRecentlyChanged(prev => {
+                const next = new Set(prev);
+                next.delete(data.id);
+                return next;
+              });
+            }, 3000);
+            // Clear any existing timeout
+            const existing = recentlyChangedTimeoutRef.current.get(data.id);
+            if (existing) clearTimeout(existing);
+            recentlyChangedTimeoutRef.current.set(data.id, timeout);
+          }
+        })
+        .catch(console.error);
+    } else if (type === 'DELETE') {
+      setItems(prev => prev.filter(item => item.id !== data.id));
+    }
+  }, [basketId]);
+
+  // Subscribe to realtime updates
+  const { isConnected } = useContextItemsRealtime(basketId || '', handleRealtimeUpdate);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    const timeouts = recentlyChangedTimeoutRef.current;
+    return () => {
+      timeouts.forEach(timeout => clearTimeout(timeout));
+      timeouts.clear();
+    };
+  }, []);
 
   // Fetch context items
   const fetchItems = useCallback(async () => {
@@ -151,12 +225,20 @@ export function ContextWindowContent() {
     return groups;
   }, [filteredItems]);
 
-  // Check if item is highlighted
+  // Check if item is highlighted (from TP actions)
   const isHighlighted = useCallback(
     (itemId: string) => {
       return highlight?.itemIds?.includes(itemId) ?? false;
     },
     [highlight]
+  );
+
+  // Check if item was recently changed (for animation)
+  const isRecentlyChanged = useCallback(
+    (itemId: string) => {
+      return recentlyChanged.has(itemId);
+    },
+    [recentlyChanged]
   );
 
   // If viewing specific item
@@ -229,6 +311,21 @@ export function ContextWindowContent() {
             </Badge>
           </div>
         )}
+
+        {/* Connection status */}
+        <div className="flex items-center gap-1.5 text-xs">
+          {isConnected ? (
+            <>
+              <Wifi className="h-3 w-3 text-green-500" />
+              <span className="text-green-600">Live</span>
+            </>
+          ) : (
+            <>
+              <WifiOff className="h-3 w-3 text-muted-foreground" />
+              <span className="text-muted-foreground">Connecting...</span>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Items List */}
@@ -262,6 +359,7 @@ export function ContextWindowContent() {
                 items={groupedItems.foundation}
                 onItemClick={setSelectedItem}
                 isHighlighted={isHighlighted}
+                isRecentlyChanged={isRecentlyChanged}
               />
             )}
 
@@ -273,6 +371,7 @@ export function ContextWindowContent() {
                 items={groupedItems.working}
                 onItemClick={setSelectedItem}
                 isHighlighted={isHighlighted}
+                isRecentlyChanged={isRecentlyChanged}
               />
             )}
 
@@ -284,6 +383,7 @@ export function ContextWindowContent() {
                 items={groupedItems.ephemeral}
                 onItemClick={setSelectedItem}
                 isHighlighted={isHighlighted}
+                isRecentlyChanged={isRecentlyChanged}
               />
             )}
           </div>
@@ -308,6 +408,7 @@ interface ContextItemGroupProps {
   items: ContextItem[];
   onItemClick: (item: ContextItem) => void;
   isHighlighted: (itemId: string) => boolean;
+  isRecentlyChanged: (itemId: string) => boolean;
 }
 
 function ContextItemGroup({
@@ -316,6 +417,7 @@ function ContextItemGroup({
   items,
   onItemClick,
   isHighlighted,
+  isRecentlyChanged,
 }: ContextItemGroupProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const colors = TIER_COLORS[tier] || TIER_COLORS.working;
@@ -346,6 +448,7 @@ function ContextItemGroup({
               item={item}
               onClick={() => onItemClick(item)}
               highlighted={isHighlighted(item.id)}
+              recentlyChanged={isRecentlyChanged(item.id)}
             />
           ))}
         </div>
@@ -362,9 +465,10 @@ interface ContextItemRowProps {
   item: ContextItem;
   onClick: () => void;
   highlighted?: boolean;
+  recentlyChanged?: boolean;
 }
 
-function ContextItemRow({ item, onClick, highlighted }: ContextItemRowProps) {
+function ContextItemRow({ item, onClick, highlighted, recentlyChanged }: ContextItemRowProps) {
   const Icon = ITEM_TYPE_ICONS[item.item_type] || ITEM_TYPE_ICONS.default;
   const tierColors = TIER_COLORS[item.tier] || TIER_COLORS.working;
 
@@ -388,14 +492,19 @@ function ContextItemRow({ item, onClick, highlighted }: ContextItemRowProps) {
     <button
       onClick={onClick}
       className={cn(
-        'flex w-full items-start gap-3 p-3 text-left transition-colors',
+        'flex w-full items-start gap-3 p-3 text-left transition-all duration-300',
         highlighted
           ? 'bg-primary/5 border-l-2 border-l-primary'
+          : recentlyChanged
+          ? 'bg-green-50 border-l-2 border-l-green-500 animate-pulse'
           : 'hover:bg-muted/50'
       )}
     >
-      <div className={cn('rounded-md p-1.5 shrink-0', tierColors.bg)}>
-        <Icon className={cn('h-4 w-4', tierColors.text)} />
+      <div className={cn(
+        'rounded-md p-1.5 shrink-0 transition-all',
+        recentlyChanged ? 'bg-green-100 ring-2 ring-green-300' : tierColors.bg
+      )}>
+        <Icon className={cn('h-4 w-4', recentlyChanged ? 'text-green-600' : tierColors.text)} />
       </div>
 
       <div className="flex-1 min-w-0">
@@ -406,6 +515,11 @@ function ContextItemRow({ item, onClick, highlighted }: ContextItemRowProps) {
           {highlighted && (
             <Badge variant="secondary" className="text-[10px] shrink-0">
               In Use
+            </Badge>
+          )}
+          {recentlyChanged && (
+            <Badge className="text-[10px] shrink-0 bg-green-100 text-green-700 border-green-200">
+              Updated
             </Badge>
           )}
         </div>

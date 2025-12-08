@@ -195,6 +195,112 @@ export function useWorkTicketsRealtime(
 }
 
 // ============================================================================
+// useWorkOutputsRealtime
+// ============================================================================
+
+export interface RealtimeWorkOutput {
+  id: string;
+  output_type: string;
+  supervision_status: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export function useWorkOutputsRealtime(
+  basketId: string,
+  onUpdate?: (event: RealtimeEvent<RealtimeWorkOutput>) => void
+) {
+  const [lastUpdate, setLastUpdate] = useState<RealtimeEvent<RealtimeWorkOutput> | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [pendingOutputs, setPendingOutputs] = useState<RealtimeWorkOutput[]>([]);
+
+  // Use ref to avoid re-subscribing when callback changes
+  const onUpdateRef = useRef(onUpdate);
+  onUpdateRef.current = onUpdate;
+
+  useEffect(() => {
+    if (!basketId) return;
+
+    const supabase = createBrowserClient();
+
+    const channel = supabase
+      .channel(`work_outputs_${basketId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'work_outputs',
+          filter: `basket_id=eq.${basketId}`,
+        },
+        (payload) => {
+          console.log('[TPRealtime] New work output:', payload.new);
+
+          const event: RealtimeEvent<RealtimeWorkOutput> = {
+            type: 'INSERT',
+            data: payload.new as RealtimeWorkOutput,
+            timestamp: new Date().toISOString(),
+          };
+
+          setLastUpdate(event);
+          const output = payload.new as RealtimeWorkOutput;
+          if (output.supervision_status === 'pending_review') {
+            setPendingOutputs(prev => [...prev, output]);
+          }
+          onUpdateRef.current?.(event);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'work_outputs',
+          filter: `basket_id=eq.${basketId}`,
+        },
+        (payload) => {
+          console.log('[TPRealtime] Work output updated:', payload.new);
+
+          const event: RealtimeEvent<RealtimeWorkOutput> = {
+            type: 'UPDATE',
+            data: payload.new as RealtimeWorkOutput,
+            timestamp: new Date().toISOString(),
+          };
+
+          setLastUpdate(event);
+
+          // Remove from pending if no longer pending
+          const output = payload.new as RealtimeWorkOutput;
+          if (output.supervision_status !== 'pending_review') {
+            setPendingOutputs(prev => prev.filter(o => o.id !== output.id));
+          } else {
+            setPendingOutputs(prev =>
+              prev.map(o => o.id === output.id ? output : o)
+            );
+          }
+
+          onUpdateRef.current?.(event);
+        }
+      )
+      .subscribe((status) => {
+        console.log('[TPRealtime] Outputs subscription status:', status);
+        setIsConnected(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [basketId]); // Only depend on basketId, not the callback
+
+  return {
+    lastUpdate,
+    isConnected,
+    pendingOutputs,
+    hasPendingReview: pendingOutputs.length > 0,
+  };
+}
+
+// ============================================================================
 // useTPMessagesRealtime (optional - for multi-device sync)
 // ============================================================================
 

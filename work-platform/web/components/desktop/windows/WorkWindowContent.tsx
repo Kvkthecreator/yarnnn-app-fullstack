@@ -5,12 +5,13 @@
  *
  * Content for the Work floating window.
  * Displays active work tickets with status, progress, and actions.
+ * Features realtime updates via Supabase subscriptions.
  *
- * Part of Desktop UI Architecture v1.0
+ * Part of Desktop UI Architecture v2.0 (Live Workspace)
  * See: /docs/implementation/DESKTOP_UI_IMPLEMENTATION_PLAN.md
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import {
   Loader2,
@@ -22,10 +23,13 @@ import {
   ChevronRight,
   RefreshCw,
   StopCircle,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useBasketId, useDesktop } from '../DesktopProvider';
+import { useWorkTicketsRealtime, type RealtimeEvent, type RealtimeWorkTicket } from '@/hooks/useTPRealtime';
 
 // ============================================================================
 // Types
@@ -72,6 +76,66 @@ export function WorkWindowContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Track recently changed tickets for highlight animation
+  const [recentlyChanged, setRecentlyChanged] = useState<Set<string>>(new Set());
+  const recentlyChangedTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  // Realtime subscription handler
+  const handleRealtimeUpdate = useCallback((event: RealtimeEvent<RealtimeWorkTicket>) => {
+    const { type, data } = event;
+
+    // Mark as recently changed for animation
+    const markAsChanged = (id: string) => {
+      setRecentlyChanged(prev => new Set([...prev, id]));
+      const timeout = setTimeout(() => {
+        setRecentlyChanged(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 3000);
+      const existing = recentlyChangedTimeoutRef.current.get(id);
+      if (existing) clearTimeout(existing);
+      recentlyChangedTimeoutRef.current.set(id, timeout);
+    };
+
+    if (type === 'INSERT') {
+      // Fetch full ticket data
+      fetch(`/api/baskets/${basketId}/work-tickets/${data.id}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(fullTicket => {
+          if (fullTicket) {
+            setTickets(prev => [fullTicket, ...prev]);
+            markAsChanged(data.id);
+          }
+        })
+        .catch(console.error);
+    } else if (type === 'UPDATE') {
+      // Fetch updated ticket data
+      fetch(`/api/baskets/${basketId}/work-tickets/${data.id}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(fullTicket => {
+          if (fullTicket) {
+            setTickets(prev => prev.map(t => t.id === data.id ? fullTicket : t));
+            markAsChanged(data.id);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [basketId]);
+
+  // Subscribe to realtime updates
+  const { isConnected } = useWorkTicketsRealtime(basketId || '', handleRealtimeUpdate);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    const timeouts = recentlyChangedTimeoutRef.current;
+    return () => {
+      timeouts.forEach(timeout => clearTimeout(timeout));
+      timeouts.clear();
+    };
+  }, []);
+
   // Fetch work tickets
   const fetchTickets = useCallback(async () => {
     if (!basketId) return;
@@ -95,14 +159,16 @@ export function WorkWindowContent() {
 
   useEffect(() => {
     fetchTickets();
-    // Poll for updates when there are running tickets
-    const interval = setInterval(() => {
-      if (tickets.some((t) => t.status === 'running' || t.status === 'pending')) {
-        fetchTickets();
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [fetchTickets, tickets]);
+    // No longer need polling when realtime is active - only poll as fallback
+    if (!isConnected) {
+      const interval = setInterval(() => {
+        if (tickets.some((t) => t.status === 'running' || t.status === 'pending')) {
+          fetchTickets();
+        }
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [fetchTickets, tickets, isConnected]);
 
   // Check if ticket is highlighted
   const isHighlighted = useCallback(
@@ -110,6 +176,14 @@ export function WorkWindowContent() {
       return highlight?.itemIds?.includes(ticketId) ?? false;
     },
     [highlight]
+  );
+
+  // Check if ticket was recently changed
+  const isRecentlyChanged = useCallback(
+    (ticketId: string) => {
+      return recentlyChanged.has(ticketId);
+    },
+    [recentlyChanged]
   );
 
   // Group tickets
@@ -156,9 +230,22 @@ export function WorkWindowContent() {
               {completedTickets.length} completed
             </span>
           </div>
-          <Button variant="ghost" size="sm" onClick={fetchTickets}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Connection status */}
+            {isConnected ? (
+              <div className="flex items-center gap-1 text-xs">
+                <Wifi className="h-3 w-3 text-green-500" />
+                <span className="text-green-600">Live</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 text-xs">
+                <WifiOff className="h-3 w-3 text-muted-foreground" />
+              </div>
+            )}
+            <Button variant="ghost" size="sm" onClick={fetchTickets}>
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {highlight?.action && (
@@ -205,6 +292,7 @@ export function WorkWindowContent() {
                     key={ticket.id}
                     ticket={ticket}
                     highlighted={isHighlighted(ticket.id)}
+                    recentlyChanged={isRecentlyChanged(ticket.id)}
                     onCancel={() => handleCancel(ticket.id)}
                   />
                 ))}
@@ -222,6 +310,7 @@ export function WorkWindowContent() {
                     key={ticket.id}
                     ticket={ticket}
                     highlighted={isHighlighted(ticket.id)}
+                    recentlyChanged={isRecentlyChanged(ticket.id)}
                     onRetry={
                       ticket.status === 'failed'
                         ? () => handleRetry(ticket.id)
@@ -245,6 +334,7 @@ export function WorkWindowContent() {
 interface WorkTicketRowProps {
   ticket: WorkTicket;
   highlighted?: boolean;
+  recentlyChanged?: boolean;
   onCancel?: () => void;
   onRetry?: () => void;
 }
@@ -252,6 +342,7 @@ interface WorkTicketRowProps {
 function WorkTicketRow({
   ticket,
   highlighted,
+  recentlyChanged,
   onCancel,
   onRetry,
 }: WorkTicketRowProps) {
@@ -262,18 +353,23 @@ function WorkTicketRow({
   return (
     <div
       className={cn(
-        'p-4 transition-colors',
+        'p-4 transition-all duration-300',
         highlighted
           ? 'bg-primary/5 border-l-2 border-l-primary'
+          : recentlyChanged
+          ? 'bg-green-50 border-l-2 border-l-green-500 animate-pulse'
           : 'hover:bg-muted/50'
       )}
     >
       <div className="flex items-start gap-3">
-        <div className={cn('rounded-md p-2', config.bg)}>
+        <div className={cn(
+          'rounded-md p-2 transition-all',
+          recentlyChanged ? 'bg-green-100 ring-2 ring-green-300' : config.bg
+        )}>
           <Icon
             className={cn(
               'h-4 w-4',
-              config.color,
+              recentlyChanged ? 'text-green-600' : config.color,
               isRunning && 'animate-spin'
             )}
           />
@@ -287,6 +383,11 @@ function WorkTicketRow({
             <Badge variant="outline" className="text-xs capitalize">
               {ticket.status}
             </Badge>
+            {recentlyChanged && (
+              <Badge className="text-[10px] shrink-0 bg-green-100 text-green-700 border-green-200">
+                Updated
+              </Badge>
+            )}
           </div>
 
           {ticket.current_step && (

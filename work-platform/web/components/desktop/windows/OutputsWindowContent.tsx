@@ -5,12 +5,13 @@
  *
  * Content for the Outputs floating window.
  * Displays work outputs with supervision actions (approve/reject).
+ * Features realtime updates via Supabase subscriptions.
  *
- * Part of Desktop UI Architecture v1.0
+ * Part of Desktop UI Architecture v2.0 (Live Workspace)
  * See: /docs/implementation/DESKTOP_UI_IMPLEMENTATION_PLAN.md
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import {
   Loader2,
@@ -22,10 +23,13 @@ import {
   RefreshCw,
   FileText,
   Eye,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useBasketId, useDesktop } from '../DesktopProvider';
+import { useWorkOutputsRealtime, type RealtimeEvent, type RealtimeWorkOutput } from '@/hooks/useTPRealtime';
 
 // ============================================================================
 // Types
@@ -70,6 +74,66 @@ export function OutputsWindowContent() {
   const [error, setError] = useState<string | null>(null);
   const [selectedOutput, setSelectedOutput] = useState<WorkOutput | null>(null);
 
+  // Track recently changed outputs for highlight animation
+  const [recentlyChanged, setRecentlyChanged] = useState<Set<string>>(new Set());
+  const recentlyChangedTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  // Realtime subscription handler
+  const handleRealtimeUpdate = useCallback((event: RealtimeEvent<RealtimeWorkOutput>) => {
+    const { type, data } = event;
+
+    // Mark as recently changed for animation
+    const markAsChanged = (id: string) => {
+      setRecentlyChanged(prev => new Set([...prev, id]));
+      const timeout = setTimeout(() => {
+        setRecentlyChanged(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 3000);
+      const existing = recentlyChangedTimeoutRef.current.get(id);
+      if (existing) clearTimeout(existing);
+      recentlyChangedTimeoutRef.current.set(id, timeout);
+    };
+
+    if (type === 'INSERT') {
+      // Fetch full output data
+      fetch(`/api/baskets/${basketId}/work-outputs/${data.id}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(fullOutput => {
+          if (fullOutput) {
+            setOutputs(prev => [fullOutput, ...prev]);
+            markAsChanged(data.id);
+          }
+        })
+        .catch(console.error);
+    } else if (type === 'UPDATE') {
+      // Fetch updated output data
+      fetch(`/api/baskets/${basketId}/work-outputs/${data.id}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(fullOutput => {
+          if (fullOutput) {
+            setOutputs(prev => prev.map(o => o.id === data.id ? fullOutput : o));
+            markAsChanged(data.id);
+          }
+        })
+        .catch(console.error);
+    }
+  }, [basketId]);
+
+  // Subscribe to realtime updates
+  const { isConnected } = useWorkOutputsRealtime(basketId || '', handleRealtimeUpdate);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    const timeouts = recentlyChangedTimeoutRef.current;
+    return () => {
+      timeouts.forEach(timeout => clearTimeout(timeout));
+      timeouts.clear();
+    };
+  }, []);
+
   // Fetch outputs
   const fetchOutputs = useCallback(async () => {
     if (!basketId) return;
@@ -101,6 +165,14 @@ export function OutputsWindowContent() {
       return highlight?.itemIds?.includes(outputId) ?? false;
     },
     [highlight]
+  );
+
+  // Check if output was recently changed
+  const isRecentlyChanged = useCallback(
+    (outputId: string) => {
+      return recentlyChanged.has(outputId);
+    },
+    [recentlyChanged]
   );
 
   // Group outputs
@@ -163,9 +235,22 @@ export function OutputsWindowContent() {
               {outputs.length} total
             </span>
           </div>
-          <Button variant="ghost" size="sm" onClick={fetchOutputs}>
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Connection status */}
+            {isConnected ? (
+              <div className="flex items-center gap-1 text-xs">
+                <Wifi className="h-3 w-3 text-green-500" />
+                <span className="text-green-600">Live</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 text-xs">
+                <WifiOff className="h-3 w-3 text-muted-foreground" />
+              </div>
+            )}
+            <Button variant="ghost" size="sm" onClick={fetchOutputs}>
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -203,6 +288,7 @@ export function OutputsWindowContent() {
                     key={output.id}
                     output={output}
                     highlighted={isHighlighted(output.id)}
+                    recentlyChanged={isRecentlyChanged(output.id)}
                     onClick={() => setSelectedOutput(output)}
                     onApprove={() => handleApprove(output.id)}
                     onReject={() => handleReject(output.id)}
@@ -222,6 +308,7 @@ export function OutputsWindowContent() {
                     key={output.id}
                     output={output}
                     highlighted={isHighlighted(output.id)}
+                    recentlyChanged={isRecentlyChanged(output.id)}
                     onClick={() => setSelectedOutput(output)}
                   />
                 ))}
@@ -241,6 +328,7 @@ export function OutputsWindowContent() {
 interface OutputRowProps {
   output: WorkOutput;
   highlighted?: boolean;
+  recentlyChanged?: boolean;
   onClick: () => void;
   onApprove?: () => void;
   onReject?: () => void;
@@ -249,6 +337,7 @@ interface OutputRowProps {
 function OutputRow({
   output,
   highlighted,
+  recentlyChanged,
   onClick,
   onApprove,
   onReject,
@@ -259,13 +348,20 @@ function OutputRow({
   return (
     <div
       className={cn(
-        'p-4 transition-colors',
-        highlighted ? 'bg-primary/5 border-l-2 border-l-primary' : 'hover:bg-muted/50'
+        'p-4 transition-all duration-300',
+        highlighted
+          ? 'bg-primary/5 border-l-2 border-l-primary'
+          : recentlyChanged
+          ? 'bg-green-50 border-l-2 border-l-green-500 animate-pulse'
+          : 'hover:bg-muted/50'
       )}
     >
       <div className="flex items-start gap-3">
-        <div className={cn('rounded-md p-2', config.bg)}>
-          <Icon className={cn('h-4 w-4', config.color)} />
+        <div className={cn(
+          'rounded-md p-2 transition-all',
+          recentlyChanged ? 'bg-green-100 ring-2 ring-green-300' : config.bg
+        )}>
+          <Icon className={cn('h-4 w-4', recentlyChanged ? 'text-green-600' : config.color)} />
         </div>
 
         <div className="flex-1 min-w-0 cursor-pointer" onClick={onClick}>
@@ -276,6 +372,11 @@ function OutputRow({
             <Badge variant="outline" className="text-xs">
               {output.output_type}
             </Badge>
+            {recentlyChanged && (
+              <Badge className="text-[10px] shrink-0 bg-green-100 text-green-700 border-green-200">
+                New
+              </Badge>
+            )}
           </div>
 
           {output.body && (
