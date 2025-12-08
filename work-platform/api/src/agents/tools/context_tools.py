@@ -29,7 +29,7 @@ Use this to understand the user's current context before making suggestions or t
 
 Available item types:
 - Foundation tier (stable, user-established): problem, customer, vision, brand
-- Working tier (accumulating): competitor, trend_digest, competitor_snapshot
+- Working tier (accumulating): competitor, trend_digest, competitor_snapshot, reference
 
 Example: read_context(item_type="problem") returns the user's problem statement.""",
         "input_schema": {
@@ -37,7 +37,7 @@ Example: read_context(item_type="problem") returns the user's problem statement.
             "properties": {
                 "item_type": {
                     "type": "string",
-                    "enum": ["problem", "customer", "vision", "brand", "competitor", "trend_digest", "competitor_snapshot"],
+                    "enum": ["problem", "customer", "vision", "brand", "competitor", "trend_digest", "competitor_snapshot", "reference"],
                     "description": "The type of context item to read. Must be one of the defined types."
                 },
                 "fields": {
@@ -59,17 +59,18 @@ Example: read_context(item_type="problem") returns the user's problem statement.
 
 IMPORTANT: You can ONLY write to these defined item types:
 - Foundation tier (require user approval): problem, customer, vision, brand
-- Working tier (written directly): competitor, trend_digest, competitor_snapshot
+- Working tier (written directly): competitor, trend_digest, competitor_snapshot, reference
 
-Do NOT invent new item types. If you need to record findings, insights, or analysis that don't fit these types, use conversation or trigger a research recipe which uses emit_work_output.
+Use 'reference' for user-shared data (reports, research, raw information) that doesn't fit other types.
+Do NOT invent new item types beyond these.
 
-Example: write_context(item_type="competitor", content={"name": "Acme", "strengths": ["Fast", "Cheap"]}, item_key="Acme")""",
+Example: write_context(item_type="reference", item_key="korean_fin_2024", content={"title": "Korean Financial Data", "data": "..."})""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "item_type": {
                     "type": "string",
-                    "enum": ["problem", "customer", "vision", "brand", "competitor", "trend_digest", "competitor_snapshot"],
+                    "enum": ["problem", "customer", "vision", "brand", "competitor", "trend_digest", "competitor_snapshot", "reference"],
                     "description": "The type of context item. Must be one of the defined types."
                 },
                 "content": {
