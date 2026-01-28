@@ -2,7 +2,7 @@
 
 **Comprehensive Documentation for YARNNN v4.0 AI Work Platform**
 
-**Last Updated**: 2025-10-31
+**Last Updated**: 2026-01-28
 
 ---
 
@@ -95,7 +95,39 @@
 
 ---
 
-### 5. Archive (Historical Documentation)
+### 5. Fixes (Implementation Logs)
+
+**Location**: [`fixes/`](fixes/)
+
+**Purpose**: Implementation summaries and fix documentation
+
+**Contents**:
+- Work outputs fixes and migrations
+- Frontend integration updates
+- Recipe execution flow fixes
+- Architecture correction logs
+
+**When to Read**: Debugging similar issues or understanding implementation history
+
+---
+
+### 6. Deployment (Deployment Guides)
+
+**Location**: [`deployment/`](deployment/)
+
+**Purpose**: Deployment guides, phase summaries, and operational documentation
+
+**Contents**:
+- Phase implementation summaries (1-6)
+- Deployment guides and status
+- Local development setup
+- Skills implementation guides
+
+**When to Read**: Deploying, operating, or extending YARNNN
+
+---
+
+### 7. Archive (Historical Documentation)
 
 **Location**: [`archive/`](archive/)
 
@@ -108,6 +140,8 @@
 - `planning/` - Implementation plans and refactoring documents
 - `migrations/` - Database and API migration guides
 - `mcp/` - MCP server specifications
+- `deployment-phases/` - Archived phase implementation details
+- `fixes/` - Archived fix iterations
 - `deprecated/` - Obsolete documentation
 
 **When to Read**: Understanding YARNNN's evolution or troubleshooting legacy code
